@@ -4,6 +4,22 @@ from neo4j import AsyncGraphDatabase
 
 logger = logging.getLogger(__name__)
 
+VALID_LABELS = {"Module", "Class", "Function", "Method", "Import", "Config"}
+VALID_REL_TYPES = {"CONTAINS", "OWNS", "DEPENDS_ON", "CALLS", "IMPLEMENTS", "USES_CONFIG"}
+
+
+def _validate_label(label: str) -> str:
+    if label not in VALID_LABELS:
+        raise ValueError(f"Invalid label: {label}")
+    return label
+
+
+def _validate_rel_type(rel_type: str) -> str:
+    if rel_type not in VALID_REL_TYPES:
+        raise ValueError(f"Invalid relation type: {rel_type}")
+    return rel_type
+
+
 class Neo4jStore:
     def __init__(self, collection: str = ""):
         self.uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
@@ -74,13 +90,15 @@ class Neo4jStore:
             for rel in relations:
                 source = rel["source"]
                 target = rel["target"]
-                rel_type = rel["type"]
+                source_label = _validate_label(source["label"])
+                target_label = _validate_label(target["label"])
+                rel_type = _validate_rel_type(rel["type"])
 
                 # Tek sorguda ardışık MERGE kullanarak cartesian product uyarısını önle.
                 upsert_query = (
-                    f"MERGE (s:{source['label']} {{name: $s_name, collection: $coll}}) "
+                    f"MERGE (s:{source_label} {{name: $s_name, collection: $coll}}) "
                     f"SET s += $s_props "
-                    f"MERGE (t:{target['label']} {{name: $t_name, collection: $coll}}) "
+                    f"MERGE (t:{target_label} {{name: $t_name, collection: $coll}}) "
                     f"SET t += $t_props "
                     f"MERGE (s)-[:{rel_type}]->(t)"
                 )
