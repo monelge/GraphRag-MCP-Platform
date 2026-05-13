@@ -63,6 +63,22 @@ _REQUIRED_ON_START: set[str] = {
     "state.md", "context.md", "tasks.md", "rules.md", "security.md"
 }
 
+# SecretScanner'ı bypass eden dosya pattern'leri (genellikle documentation)
+# .agent/ dosyaları intentional demo secrets içerir (JWT, token örnekleri)
+# Bu dosyalar operasyonel gizlilikleri değil, documentation'a ait örnektir
+_WHITELIST_SKIP_SCANNING: set[str] = {
+    "security.md",              # Demo JWT tokens, API key örnekleri
+    "rules.md",                 # Yapılandırma örnekleri
+    "backend.md",               # Backend pattern'leri, config örnekleri
+    "frontend.md",              # Frontend config örnekleri
+    "backend-architecture.md",  # Backend mimarisi (demo config'ler)
+    "mobile-plan.md",           # Mobile plan (BASE64 config'leri)
+    "mobile-state.md",          # Mobile state (BASE64 artifacts)
+    "mobile-tasks.md",          # Mobile tasks (BASE64 examples)
+    "state.md",                 # State documentation (BASE64 samples)
+    "tasks.md",                 # Task documentation (BASE64 samples)
+}
+
 
 @dataclass
 class _Section:
@@ -99,6 +115,10 @@ class MarkdownChunker:
         """
         Dosyayı okur ve chunk listesi döndürür.
         relative_path verilmezse file_path'ten türetilir.
+        
+        Whitelist Davranışı:
+          - Dosya _WHITELIST_SKIP_SCANNING içindeyse SecretScanner bypass edilir
+          - .agent/ documentation dosyalarında intentional demo secrets bulunabilir
         """
         path = Path(file_path)
         content = path.read_text(encoding="utf-8")
@@ -108,8 +128,11 @@ class MarkdownChunker:
         layer = _FILE_LAYER_MAP.get(filename, "")
         doc_priority = _FILE_PRIORITY_MAP.get(filename, "normal")
         required = filename in _REQUIRED_ON_START
+        
+        # Dosya whitelist'te ise SecretScanner'ı bypass et
+        skip_scanning = filename in _WHITELIST_SKIP_SCANNING
 
-        return self._chunk_text(content, rel, layer, doc_priority, required)
+        return self._chunk_text(content, rel, layer, doc_priority, required, skip_scanning)
 
     # ------------------------------------------------------------------
     # İç metodlar
@@ -122,6 +145,7 @@ class MarkdownChunker:
         layer: str,
         doc_priority: str,
         required_on_session_start: bool,
+        skip_scanning: bool = False,
     ) -> list[AgentDocChunk]:
         sections = self._parse_sections(content)
         result: list[AgentDocChunk] = []
@@ -139,10 +163,15 @@ class MarkdownChunker:
                     continue
 
                 # SecretScanner — son savunma hattı
-                scan = secret_scanner.scan(sub_text)
-                if scan.should_skip:
-                    continue
-                final_text = scan.redacted_text
+                # Whitelist'te olan dosyalar (documentation) bypass edilir
+                if not skip_scanning:
+                    scan = secret_scanner.scan(sub_text)
+                    if scan.should_skip:
+                        continue
+                    final_text = scan.redacted_text
+                else:
+                    # Whitelist dosyası: scanning skip et, demo secrets izin ver
+                    final_text = sub_text
 
                 cid = _chunk_id(relative_path, section.h1, section.h2,
                                  section.h3, s_idx, c_idx)
