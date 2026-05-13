@@ -30,9 +30,9 @@ PROFILES = {
     ),
     "python": ExecutionProfile(
         name="python",
-        build_cmd="pip install -r requirements.txt",
-        test_cmd="pytest",
-        lint_cmd="ruff check ."
+        build_cmd="python3 -m pip install -r requirements.txt",
+        test_cmd="python3 -m pytest",
+        lint_cmd="python3 -m ruff check ."
     ),
     "node": ExecutionProfile(
         name="node",
