@@ -1,0 +1,8 @@
+
+# Tüm yerel veritabanı ve çalışma dosyaları
+data/
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store

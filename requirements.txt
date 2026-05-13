@@ -1,0 +1,13 @@
+mcp==1.6.0
+qdrant-client
+tree-sitter>=0.23
+tree-sitter-python
+tree-sitter-typescript
+tree-sitter-c-sharp
+fastembed
+openai
+python-dotenv
+rich
+redis[asyncio]>=5.0.0
+asyncpg>=0.29.0
+neo4j

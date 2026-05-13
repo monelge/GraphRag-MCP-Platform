@@ -1,0 +1,65 @@
+import logging
+from typing import List, Dict, Any
+from src.storage.episodic_store import EpisodicStore, MemoryEntry
+
+logger = logging.getLogger(__name__)
+
+class MemoryCompactor:
+    def __init__(self, episodic_store: EpisodicStore):
+        self.store = episodic_store
+
+    async def compact(self, collection: str, query: str = "*", threshold: float = 0.85):
+        """
+        Benzer bellek kayıtlarını bulur ve onları tek bir kayıtta birleştirir.
+        
+        Süreç:
+        1. Belirli bir koleksiyondaki veya genelindeki kayıtları çek.
+        2. Benzerlik analizi yap (vektör benzerliği üzerinden).
+        3. Çok benzer olanları LLM'e gönderip 'tek bir özet' haline getir.
+        4. Eski kayıtları 'archived' yap, yeni birleştirilmiş kaydı ekle.
+        """
+        # 1. Kayıtları çek (Arama motorunu kullanarak tümünü veya benzerlerini bul)
+        # Not: Gerçek bir compaction tüm DB'yi taramalıdır; 
+        # burada prototip olarak query bazlı benzerleri birleştirme yapıyoruz.
+        
+        results = await self.store.search_memory(query, collection=collection, top_k=20)
+        if len(results) < 2:
+            return "Kompakt hale getirilecek yeterli benzer kayıt bulunamadı."
+
+        # 2. Gruplandırma (LLM'e gönderilecek adayları seç)
+        # Basitlik için ilk 5'ini birleştirme adayı yapalım
+        candidates = results[:5]
+        
+        # 3. LLM ile birleştirme (Prompt stratejisi)
+        merged_content = await self._merge_with_llm(candidates)
+        
+        # 4. Yeni kaydı oluştur ve eskileri güncelle
+        # (Bu kısım gerçek bir sistemde transaction-like olmalı)
+        new_entry = MemoryEntry(
+            title=f"Compacted Memory: {query}",
+            content=merged_content,
+            memory_type="semantic",
+            collection=collection,
+            tags=["compacted"]
+        )
+        
+        await self.store.store_memory(new_entry)
+        
+        return f"✅ {len(candidates)} kayıt başarıyla birleştirildi: {new_entry.entry_id}"
+
+    async def _merge_with_llm(self, candidates: List[Dict]) -> str:
+        """LLM kullanarak birden fazla kaydı tek bir tutarlı metne dönüştürür."""
+        from src.mcp_server import _llm_client
+        
+        context = "\n---\n".join([f"Başlık: {c['name']}\nİçerik: {c['code']}" for c in candidates])
+        
+        client = _llm_client()
+        response = await client.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Sana verilen benzer bellek kayıtlarını, bilgi kaybı olmadan tek bir tutarlı ve öz metne dönüştür. Tekrar eden kısımları temizle."},
+                {"role": "user", "content": f"Birleştirilecek Kayıtlar:\n{context}"}
+            ],
+            max_tokens=1000
+        )
+        return response.choices[0].message.content.strip()
