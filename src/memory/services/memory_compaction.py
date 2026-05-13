@@ -1,5 +1,6 @@
 import logging
 from typing import List, Dict, Any
+from src.shared.llm_client import get_llm_client
 from src.storage.episodic_store import EpisodicStore, MemoryEntry
 
 logger = logging.getLogger(__name__)
@@ -49,11 +50,9 @@ class MemoryCompactor:
 
     async def _merge_with_llm(self, candidates: List[Dict]) -> str:
         """LLM kullanarak birden fazla kaydı tek bir tutarlı metne dönüştürür."""
-        from src.mcp_server import _llm_client
-        
         context = "\n---\n".join([f"Başlık: {c['name']}\nİçerik: {c['code']}" for c in candidates])
-        
-        client = _llm_client()
+
+        client = get_llm_client()
         response = await client.chat.completions.create(
             model="openai/gpt-4o-mini",
             messages=[

@@ -9,7 +9,6 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, MofNCompleteColumn
 from rich.panel import Panel
@@ -49,6 +48,7 @@ from src.indexing.pipelines.project_intelligence import (
     impact_report,
     sync_project_intelligence,
 )
+from src.shared.llm_client import get_llm_client
 from src.shared.project_registry import ProjectRegistry
 from src.retrieval.search.hybrid_search import (
     HybridSearcher, CODE_ONLY_FILTER, AGENT_DOC_FILTER,
@@ -102,19 +102,6 @@ async def _lifespan(server):
 
 
 app = FastMCP("graph-mcp", lifespan=_lifespan)
-
-# LLM istemcisi — query rewriting ve explain_code için paylaşımlı kullanılır.
-# Neden modüler? Her araç kendi client oluşturmak yerine bu fabrika fonksiyonunu çağırır.
-def _llm_client() -> AsyncOpenAI:
-    return AsyncOpenAI(
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        base_url="https://openrouter.ai/api/v1",
-        default_headers={
-            "HTTP-Referer": "https://github.com/GraphMCP",
-            "X-Title": "GraphMCP",
-        },
-    )
-
 
 def _project_collection_name(project_path: str) -> str:
     return Path(project_path).resolve().name.replace(" ", "_")
@@ -513,7 +500,7 @@ async def search_code(
     if do_rewrite:
         try:
             budget.consume_aux_llm("query_rewrite_or_hyde")
-            client = _llm_client()
+            client = get_llm_client()
             # HyDE: 3 expansion üret (rewrite yerine daha zengin sinyal)
             with tracer.step("hyde"):
                 expansions = await hyde_expand(
@@ -700,7 +687,7 @@ async def explain_code(
         for r in final_chunks
     ])
 
-    client = _llm_client()
+    client = get_llm_client()
     response = await client.chat.completions.create(
         model=model,
         messages=[
