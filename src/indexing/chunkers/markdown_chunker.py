@@ -14,6 +14,7 @@ Temel kurallar:
 """
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,6 +79,8 @@ _WHITELIST_SKIP_SCANNING: set[str] = {
     "state.md",                 # State documentation (BASE64 samples)
     "tasks.md",                 # Task documentation (BASE64 samples)
 }
+ALLOW_SECRET_BYPASS = os.getenv("ALLOW_SECRET_BYPASS", "").lower() == "true"
+IS_PRODUCTION = os.getenv("ENVIRONMENT", "").lower() == "production"
 
 
 @dataclass
@@ -117,7 +120,7 @@ class MarkdownChunker:
         relative_path verilmezse file_path'ten türetilir.
         
         Whitelist Davranışı:
-          - Dosya _WHITELIST_SKIP_SCANNING içindeyse SecretScanner bypass edilir
+          - SecretScanner bypass'ı yalnızca explicit opt-in ile ve production dışında açılır
           - .agent/ documentation dosyalarında intentional demo secrets bulunabilir
         """
         path = Path(file_path)
@@ -129,8 +132,12 @@ class MarkdownChunker:
         doc_priority = _FILE_PRIORITY_MAP.get(filename, "normal")
         required = filename in _REQUIRED_ON_START
         
-        # Dosya whitelist'te ise SecretScanner'ı bypass et
-        skip_scanning = filename in _WHITELIST_SKIP_SCANNING
+        # Bypass yalnızca geliştirme/test senaryolarında explicit olarak açılabilir.
+        skip_scanning = (
+            ALLOW_SECRET_BYPASS
+            and not IS_PRODUCTION
+            and filename in _WHITELIST_SKIP_SCANNING
+        )
 
         return self._chunk_text(content, rel, layer, doc_priority, required, skip_scanning)
 
@@ -163,7 +170,7 @@ class MarkdownChunker:
                     continue
 
                 # SecretScanner — son savunma hattı
-                # Whitelist'te olan dosyalar (documentation) bypass edilir
+                # Demo bypass yalnızca non-production opt-in modunda çalışır.
                 if not skip_scanning:
                     scan = secret_scanner.scan(sub_text)
                     if scan.should_skip:
