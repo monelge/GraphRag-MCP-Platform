@@ -6,3 +6,22 @@ __pycache__/
 *.py[cod]
 *$py.class
 .DS_Store
+
+# Test & Coverage
+htmlcov/
+.coverage
+.pytest_cache/
+*.cover
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Linting
+.ruff_cache/
+
+# Build
+build/
+dist/
+*.egg-info/

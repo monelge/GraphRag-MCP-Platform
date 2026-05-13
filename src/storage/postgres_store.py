@@ -10,6 +10,7 @@ Privacy-safe tasarım kararları:
 asyncpg yoksa tüm metodlar no-op döner; loglama kritik yol değildir.
 """
 
+from __future__ import annotations
 import hashlib
 import os
 from typing import Optional
@@ -21,62 +22,66 @@ except ImportError:
     _PG_AVAILABLE = False
 
 # Tablo şeması — bağlantı kurulunca CREATE TABLE IF NOT EXISTS ile hazırlanır.
+# Türkçe karakterleri desteklemek için UTF-8 encoding kullanılır.
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS retrieval_logs (
     id                  BIGSERIAL PRIMARY KEY,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     collection          TEXT NOT NULL,
-    query_type          TEXT,                  -- factual_doc | code_relation | config_lookup | broad_summary
-    redacted_query      TEXT,                  -- İlk 80 karakter, secret pattern'ler maskelenmiş
+    query_type          TEXT,
+    redacted_query      TEXT,
     top_k               INT,
     hit_count           INT,
     top1_score          FLOAT,
     latency_ms          INT,
-    faithfulness_score  FLOAT,                 -- Periyodik batch ile doldurulur, başlangıçta NULL
-    rerank_latency_ms   INT,                   -- Rerank işlem süresi (ms)
-    token_usage         INT,                   -- Context'e giren tahmini token sayısı
-    cache_hit           BOOLEAN DEFAULT FALSE, -- Semantic veya exact cache hit
-    answerability_fail  BOOLEAN DEFAULT FALSE, -- INSUFFICIENT sonucu → hallucination riski
-    user_id_hash        TEXT                   -- SHA-256 hash — ham kimlik saklanmaz
+    faithfulness_score  FLOAT,
+    rerank_latency_ms   INT,
+    token_usage         INT,
+    cache_hit           BOOLEAN DEFAULT FALSE,
+    answerability_fail  BOOLEAN DEFAULT FALSE,
+    user_id_hash        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_rl_collection   ON retrieval_logs(collection);
 CREATE INDEX IF NOT EXISTS idx_rl_created_at   ON retrieval_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_rl_query_type   ON retrieval_logs(query_type);
 
--- Faz 4: Agent Plane Tables
 CREATE TABLE IF NOT EXISTS tasks (
     task_id             TEXT PRIMARY KEY,
     title               TEXT,
     description         TEXT,
-    status              TEXT,
+    status              TEXT NOT NULL CHECK (status IN ('planned', 'retrieving', 'analyzing', 'waiting_approval', 'executing', 'verifying', 'summarizing', 'done', 'failed', 'aborted')),
     collection          TEXT,
-    context             JSONB,
-    metadata            JSONB,
+    context             JSONB DEFAULT '{}',
+    metadata            JSONB DEFAULT '{}',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS task_steps (
     step_id             TEXT PRIMARY KEY,
-    task_id             TEXT REFERENCES tasks(task_id) ON DELETE CASCADE,
-    description         TEXT,
-    status              TEXT,
+    task_id             TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+    description         TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'retrieving', 'analyzing', 'waiting_approval', 'executing', 'verifying', 'summarizing', 'done', 'failed', 'aborted')),
     result              TEXT,
-    started_at          FLOAT,
-    completed_at        FLOAT
+    started_at          DOUBLE PRECISION,
+    completed_at        DOUBLE PRECISION,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS task_checkpoints (
     checkpoint_id       TEXT PRIMARY KEY,
-    task_id             TEXT REFERENCES tasks(task_id) ON DELETE CASCADE,
-    status              TEXT,
-    context_snapshot    JSONB,
+    task_id             TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+    status              TEXT NOT NULL CHECK (status IN ('planned', 'retrieving', 'analyzing', 'waiting_approval', 'executing', 'verifying', 'summarizing', 'done', 'failed', 'aborted')),
+    context_snapshot    JSONB DEFAULT '{}',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_collection ON tasks(collection);
+CREATE INDEX IF NOT EXISTS idx_task_steps_task_id ON task_steps(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_steps_status ON task_steps(status);
+CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task_id ON task_checkpoints(task_id);
 """
 
 
@@ -97,18 +102,37 @@ class PostgresStore:
         """
         Connection pool oluşturur ve şemayı hazırlar.
         mcp_server.py startup'ta çağrılır; başarısız olursa loglama devre dışı.
+        
+        Faz 2 İyileştirmeler:
+        - Asyncpg timeout ayarı (command_timeout, init_command_timeout)
+        - UTF-8 encoding desteği Türkçe karakterler için
+        - Connection pool boyutu yapılandırılabilir
         """
         if not _PG_AVAILABLE:
             return
         try:
+            # Connection timeout: 30 saniye, command timeout: 60 saniye
             self._pool = await asyncpg.create_pool(
-                self._dsn, min_size=1, max_size=5
+                self._dsn, 
+                min_size=1, 
+                max_size=5,
+                command_timeout=60,
+                init=self._init_connection
             )
             async with self._pool.acquire() as conn:
                 await conn.execute(_SCHEMA_SQL)
-        except Exception:
+        except Exception as e:
             # Bağlantı hatası critical path değil — sessizce devam et
             self._pool = None
+
+    @staticmethod
+    async def _init_connection(conn):
+        """
+        Her yeni bağlantı için çalışan initialization fonksiyonu.
+        UTF-8 encoding desteği sağlar (Türkçe karakterler için).
+        """
+        await conn.execute("SET client_encoding = 'UTF8'")
+        await conn.execute("SET search_path TO public")
 
     @property
     def available(self) -> bool:

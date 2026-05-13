@@ -90,7 +90,7 @@ _MEMORY_COLLECTION = "episodic_memory"
 
 @dataclass
 class MemoryEntry:
-    """Tek bir bellek kaydı — taxonomy dahil."""
+    """Tek bir bellek kaydı — taxonomy ve Task linkage dahil."""
     title: str
     content: str
     memory_type: str = "episodic"   # MemoryType veya MemoryLayer değeri
@@ -103,6 +103,11 @@ class MemoryEntry:
     valid_from: Optional[float] = None  # UNIX timestamp
     valid_to: Optional[float] = None    # UNIX timestamp
     status: str = "active"              # active | deprecated | archived
+    
+    # Faz 3: Memory-Agent Link
+    task_id: str = ""                   # İlgili Task ID (varsa)
+    checkpoint_id: str = ""             # İlgili Checkpoint ID (varsa)
+    step_id: str = ""                   # İlgili TaskStep ID (varsa)
     
     # Otomatik doldurulur
     entry_id: str = ""
@@ -181,7 +186,7 @@ class EpisodicStore:
                 start_line=0,
                 end_line=0,
             )
-            # payload'a memory metadata ve layer ekle
+            # payload'a memory metadata, layer ve task linkage ekle
             await store.upsert_chunks(
                 [pseudo_chunk], dense_vecs, sparse_vecs,
                 extra_payload={
@@ -197,6 +202,10 @@ class EpisodicStore:
                     "valid_to": entry.valid_to,
                     "status": entry.status,
                     "source_type": "episodic_memory",
+                    # Faz 3: Task Linkage
+                    "task_id": entry.task_id,
+                    "checkpoint_id": entry.checkpoint_id,
+                    "step_id": entry.step_id,
                 }
             )
             return f"✅ Bellek kaydı oluşturuldu: {entry.entry_id} ({entry.memory_type}/{entry.memory_layer})"
