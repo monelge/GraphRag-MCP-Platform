@@ -1,7 +1,8 @@
+import asyncio
 import os
 import time
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from openai import AsyncOpenAI
 from src.control.models.model_router import get_model
 
@@ -19,6 +20,9 @@ class ModelGateway:
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.base_url = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+        self.request_timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+        self.max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+        self.max_retry_wait = int(os.getenv("LLM_MAX_RETRY_WAIT_SECONDS", "10"))
         self.client = AsyncOpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
@@ -35,34 +39,59 @@ class ModelGateway:
         }
 
     async def chat_completion(
-        self, 
-        task: str, 
-        messages: List[Dict[str, str]], 
+        self,
+        task: str,
+        messages: List[Dict[str, str]],
         **kwargs
     ):
         model = get_model(task)
         if not model:
             raise ValueError(f"Task '{task}' için model tanımlı değil veya yerel (local) bir işlem.")
 
-        t0 = time.monotonic()
-        try:
-            response = await self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                **kwargs
-            )
-            
-            latency = int((time.monotonic() - t0) * 1000)
-            tokens = response.usage.total_tokens if response.usage else 0
-            
-            # İstatistikleri güncelle
-            self._update_stats(model, latency, tokens)
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"ModelGateway hatası ({model}): {e}")
-            raise
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_retries + 1):
+            t0 = time.monotonic()
+            try:
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        **kwargs,
+                    ),
+                    timeout=self.request_timeout,
+                )
+
+                latency = int((time.monotonic() - t0) * 1000)
+                tokens = response.usage.total_tokens if response.usage else 0
+
+                # İstatistikleri güncelle
+                self._update_stats(model, latency, tokens)
+                return response
+
+            except asyncio.TimeoutError as exc:
+                last_error = RuntimeError(f"OpenAI call timeout after {self.request_timeout}s")
+                logger.warning(
+                    "ModelGateway timeout (%s) deneme %d/%d",
+                    model,
+                    attempt,
+                    self.max_retries,
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "ModelGateway geçici hatası (%s) deneme %d/%d: %s",
+                    model,
+                    attempt,
+                    self.max_retries,
+                    exc,
+                )
+
+            if attempt < self.max_retries:
+                wait_seconds = min(2 ** attempt, self.max_retry_wait)
+                await asyncio.sleep(wait_seconds)
+
+        logger.error("ModelGateway hatası (%s): %s", model, last_error)
+        raise last_error if last_error else RuntimeError("ModelGateway failed without details")
 
     def _update_stats(self, model: str, latency: int, tokens: int):
         self._stats["total_calls"] += 1
