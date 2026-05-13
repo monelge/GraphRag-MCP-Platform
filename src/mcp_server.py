@@ -1065,8 +1065,9 @@ async def recall_memory(
     for e in entries:
         tags_str = " ".join(f"`{t}`" for t in e.get("tags", []))
         stat_note = ""
-        if e.get("status") != "active":
-            stat_note = f" [⚠️ {e.get('status').upper()}]"
+        status = e.get("status")
+        if status and status != "active":
+            stat_note = f" [⚠️ {status.upper()}]"
             
         output.append(
             f"### [{e.get('memory_type','?')}] {e['title']}{stat_note} — skor: {e.get('score',0):.3f}\n"
@@ -1163,7 +1164,8 @@ async def run_verification_plan(
     Proje tipini otomatik algılar ve uygun komutları seçer.
     """
     profile = _runtime_manager.detect_profile(project_path)
-    output = [f"## 🛠️ Doğrulama Planı — {profile.name.upper()}\n"]
+    profile_name = profile.name if profile and profile.name else "UNKNOWN"
+    output = [f"## 🛠️ Doğrulama Planı — {profile_name.upper()}\n"]
     
     if run_build:
         output.append(f"### 📦 Build ({profile.build_cmd})")
