@@ -81,19 +81,29 @@ class ControlHandler:
         return format_profile(profile)
 
     async def get_control_plane_stats(self) -> str:
-        """Model gateway istatistiklerini döndürür."""
+        """Model gateway istatistiklerini ve DB'den LLM token özetini döndürür."""
         stats = self.ctx.model_gateway.get_stats()
         lines = [
             "## 🕹️ Control Plane — Model Gateway Stats",
             f"- **Toplam Çağrı:** {stats['total_calls']}",
-            f"- **Toplam Token:** {stats['total_tokens']}",
+            f"- **Toplam Token (oturum):** {stats['total_tokens']}",
             f"- **Top. Gecikme:** {stats['total_latency_ms'] / 1000:.1f}s",
-            "\n### Model Bazlı Detaylar:",
+            "\n### Model Bazlı Detaylar (oturum içi):",
         ]
         for model, model_stats in stats["per_model_stats"].items():
             lines.append(
                 f"- **{model}:** {model_stats['calls']} çağrı | {model_stats['tokens']} token | {model_stats['avg_latency']:.0f}ms avg"
             )
+        # DB'den son 7 günün kalıcı istatistikleri
+        db_rows = await self.ctx.postgres.get_llm_usage_stats(days=7)
+        if db_rows:
+            lines.append("\n### 📊 DB — Son 7 Gün LLM Token Kullanımı:")
+            for row in db_rows:
+                lines.append(
+                    f"- **{row['model']}:** {row['calls']} çağrı | "
+                    f"prompt={row['prompt_tokens']} | completion={row['completion_tokens']} | "
+                    f"toplam={row['total_tokens']} | avg={row['avg_latency_ms']}ms"
+                )
         return "\n".join(lines)
 
     async def analyze_change_impact(

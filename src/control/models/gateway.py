@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 
 from src.control.models.model_router import get_model
 from src.shared.config import config
+
+if TYPE_CHECKING:
+    from src.storage.postgres_store import PostgresStore
 
 logger = logging.getLogger(__name__)
 
@@ -16,12 +19,15 @@ logger = logging.getLogger(__name__)
 class ModelGateway:
     """Tüm LLM çağrılarını merkezi olarak yöneten ağ geçidi."""
 
-    def __init__(self):
+    def __init__(self, postgres_store: Optional["PostgresStore"] = None):
         self.api_key = config.openai_api_key
         self.base_url = config.llm_base_url
         self.request_timeout = config.llm_timeout_seconds
         self.max_retries = config.llm_max_retries
         self.max_retry_wait = config.llm_max_retry_wait_seconds
+        # Token loglarını DB'ye yazmak için opsiyonel store referansı.
+        # server.py init sonrası set edilir (circular import önlemek için).
+        self._pg: Optional["PostgresStore"] = postgres_store
         self.client = AsyncOpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
@@ -37,7 +43,18 @@ class ModelGateway:
             "per_model_stats": {},
         }
 
-    async def chat_completion(self, task: str, messages: List[Dict[str, str]], **kwargs):
+    def set_postgres(self, pg: "PostgresStore") -> None:
+        """Circular import olmadan lifespan sonrası store bağlar."""
+        self._pg = pg
+
+    async def chat_completion(
+        self,
+        task: str,
+        messages: List[Dict[str, str]],
+        task_id: str = None,
+        node_name: str = None,
+        **kwargs,
+    ):
         model = get_model(task)
         if not model:
             raise ValueError(f"Task '{task}' için model tanımlı değil veya yerel (local) bir işlem.")
@@ -50,8 +67,24 @@ class ModelGateway:
                     timeout=self.request_timeout,
                 )
                 latency = int((time.monotonic() - t0) * 1000)
-                tokens = response.usage.total_tokens if response.usage else 0
-                self._update_stats(model, latency, tokens)
+                usage = response.usage
+                prompt_tokens     = usage.prompt_tokens     if usage else 0
+                completion_tokens = usage.completion_tokens if usage else 0
+                total_tokens      = usage.total_tokens      if usage else 0
+                self._update_stats(model, latency, total_tokens)
+                # DB'ye async yaz — hata olursa sessizce geç
+                if self._pg:
+                    asyncio.ensure_future(
+                        self._pg.log_llm_usage(
+                            model=model,
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            total_tokens=total_tokens,
+                            latency_ms=latency,
+                            task_id=task_id,
+                            node_name=node_name,
+                        )
+                    )
                 return response
             except Exception as exc:
                 last_error = exc

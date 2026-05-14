@@ -12,6 +12,7 @@ class PlannerNode(BaseNode):
 
     async def run(self, task, ctx) -> NodeResult:
         steps = []
+        total_tokens = 0
         try:
             response = await ctx.model_gateway.chat_completion(
                 task="summarize",
@@ -30,7 +31,10 @@ class PlannerNode(BaseNode):
                 ],
                 temperature=0.1,
                 max_tokens=400,
+                task_id=task.task_id,
+                node_name=self.name,
             )
+            total_tokens = response.usage.total_tokens if response.usage else 0
             raw = response.choices[0].message.content or "[]"
             parsed = json.loads(raw)
             if isinstance(parsed, list):
@@ -44,4 +48,5 @@ class PlannerNode(BaseNode):
             output="Plan üretildi.",
             next_node="retriever",
             context_updates={"planned_steps": steps, "current_step_index": 0},
+            token_usage=total_tokens,
         )

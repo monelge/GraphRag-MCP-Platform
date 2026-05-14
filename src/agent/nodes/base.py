@@ -22,6 +22,8 @@ class NodeResult:
     context_updates: Dict[str, Any] = field(default_factory=dict)
     file_patches: List[dict] = field(default_factory=list)
     command_results: List[dict] = field(default_factory=list)
+    # Node içindeki toplam LLM token kullanımı (agent pipeline takibi için)
+    token_usage: int = 0
 
 
 class BaseNode(ABC):

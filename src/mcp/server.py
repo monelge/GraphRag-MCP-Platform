@@ -67,6 +67,7 @@ _orchestrator = TaskOrchestrator(_task_store, episodic_store=_episodic, checkpoi
 _command_runner = CommandRunner()
 _runtime_manager = SandboxRuntimeManager(_command_runner)
 _model_gateway = ModelGateway()
+_model_gateway.set_postgres(_postgres)
 _dataset_manager = DatasetManager()
 _reranker = LocalReranker()
 _deduplicator = SemanticDeduplicator()

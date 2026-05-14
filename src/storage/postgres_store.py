@@ -88,11 +88,29 @@ CREATE TABLE IF NOT EXISTS task_checkpoints (
 );
 CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task_id ON task_checkpoints(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_checkpoints_created ON task_checkpoints(created_at DESC);
+
+-- LLM çağrılarının prompt/completion token maliyetlerini saklar.
+-- Neden ayrı tablo? retrieval_logs embedding tokenları içerir; LLM usage farklı granülerlikte.
+CREATE TABLE IF NOT EXISTS model_usage_logs (
+    id                  BIGSERIAL PRIMARY KEY,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    model               TEXT NOT NULL,
+    task_id             TEXT,          -- hangi agent task'ından geldi (opsiyonel)
+    node_name           TEXT,          -- hangi pipeline node'undan geldi (opsiyonel)
+    prompt_tokens       INT NOT NULL DEFAULT 0,
+    completion_tokens   INT NOT NULL DEFAULT 0,
+    total_tokens        INT NOT NULL DEFAULT 0,
+    latency_ms          INT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mul_model      ON model_usage_logs(model);
+CREATE INDEX IF NOT EXISTS idx_mul_created_at ON model_usage_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_mul_task_id    ON model_usage_logs(task_id);
 """
 
 _MIGRATIONS = [
     (1, "Initial retrieval/task schema"),
     (2, "Checkpoint and schema migration tables"),
+    (3, "LLM model_usage_logs table"),
 ]
 
 
@@ -194,3 +212,62 @@ class PostgresStore:
     async def close(self) -> None:
         if self._pool:
             await self._pool.close()
+
+    async def log_llm_usage(
+        self,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        latency_ms: int,
+        task_id: str = None,
+        node_name: str = None,
+    ) -> None:
+        """LLM çağrısının token kullanımını model_usage_logs tablosuna yazar."""
+        if not self._pool:
+            return
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO model_usage_logs
+                        (model, task_id, node_name, prompt_tokens,
+                         completion_tokens, total_tokens, latency_ms)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """,
+                    model,
+                    task_id,
+                    node_name,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    latency_ms,
+                )
+        except Exception:
+            pass
+
+    async def get_llm_usage_stats(self, days: int = 7) -> list[dict]:
+        """Son N günün model bazlı token özetini döndürür."""
+        if not self._pool:
+            return []
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        model,
+                        COUNT(*)             AS calls,
+                        SUM(prompt_tokens)   AS prompt_tokens,
+                        SUM(completion_tokens) AS completion_tokens,
+                        SUM(total_tokens)    AS total_tokens,
+                        AVG(latency_ms)::INT AS avg_latency_ms
+                    FROM model_usage_logs
+                    WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
+                    GROUP BY model
+                    ORDER BY total_tokens DESC
+                    """,
+                    str(days),
+                )
+                return [dict(r) for r in rows]
+        except Exception:
+            return []

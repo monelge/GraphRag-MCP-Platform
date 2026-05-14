@@ -19,6 +19,7 @@ class EditorNode(BaseNode):
             f"+# Step: {retrieved.get('step', task.title)}\n"
             f"+# Reason: {explanation[:200].replace(chr(10), ' ')}\n"
         )
+        total_tokens = 0
         try:
             response = await ctx.model_gateway.chat_completion(
                 task="explain",
@@ -28,7 +29,10 @@ class EditorNode(BaseNode):
                 ],
                 temperature=0.1,
                 max_tokens=900,
+                task_id=task.task_id,
+                node_name=self.name,
             )
+            total_tokens = response.usage.total_tokens if response.usage else 0
             patch_text = response.choices[0].message.content or patch_text
         except Exception:
             pass
@@ -39,4 +43,5 @@ class EditorNode(BaseNode):
             next_node="verifier",
             context_updates={"file_patches": file_patches},
             file_patches=file_patches,
+            token_usage=total_tokens,
         )

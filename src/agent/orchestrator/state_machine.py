@@ -121,6 +121,12 @@ class TaskOrchestrator:
                     result = await node.run(task, self.app_context)
                     task.context.update(result.context_updates)
                     task.context["current_node"] = result.next_node
+                    # Node token kullanımını görev bağlamında biriktir
+                    if result.token_usage > 0:
+                        prev = task.context.get("total_token_usage", 0)
+                        task.context["total_token_usage"] = prev + result.token_usage
+                        node_tokens = task.context.setdefault("node_token_usage", {})
+                        node_tokens[current_node] = node_tokens.get(current_node, 0) + result.token_usage
                     if result.file_patches:
                         task.context["file_patches"] = result.file_patches
                     if result.command_results:
