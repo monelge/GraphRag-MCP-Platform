@@ -26,9 +26,17 @@ class TaskOrchestrator:
         """Status'e ait handler'ı kaydet."""
         self._step_handlers[status] = handler
 
-    async def create_task(self, title: str, description: str, collection: str) -> Task:
-        """Yeni görev oluştur."""
+    async def create_task(
+        self,
+        title: str,
+        description: str,
+        collection: str,
+        steps: list[str] | None = None,
+    ) -> Task:
+        """Yeni görev oluştur. steps verilirse her eleman bir TaskStep olarak eklenir."""
         task = Task(title=title, description=description, collection=collection)
+        for step_desc in (steps or []):
+            task.add_step(step_desc)
         await self.store.save_task(task)
         return task
 
@@ -229,3 +237,24 @@ class TaskOrchestrator:
             await self.store.save_task(task)
             return f"✅ Task {task_id} onaylandı, {next_status.value} aşamasına geçiliyor."
         return "⚠️ Onaylanacak uygun bir task bulunamadı."
+
+    async def complete_task(self, task_id: str, note: str = "") -> str:
+        """
+        Herhangi bir durumdan görevi DONE'a çeker (manuel tamamlama).
+        Zaten DONE veya ABORTED olan task'lara dokunulmaz.
+        note: İsteğe bağlı tamamlama notu (metadata'ya kaydedilir).
+        """
+        task = await self.store.get_task(task_id)
+        if not task:
+            return f"❌ Görev bulunamadı: `{task_id}`"
+        if task.status in (TaskStatus.DONE, TaskStatus.ABORTED):
+            return f"ℹ️ Görev zaten `{task.status.value}` durumunda: `{task_id}`"
+
+        previous = task.status.value
+        task.status = TaskStatus.DONE
+        task.updated_at = time.time()
+        if note:
+            task.metadata["completion_note"] = note
+        await self.store.save_task(task)
+        logger.info("Görev manuel tamamlandı: %s (%s → done)", task_id, previous)
+        return f"✅ Görev `{task_id}` tamamlandı (`{previous}` → `done`)."
