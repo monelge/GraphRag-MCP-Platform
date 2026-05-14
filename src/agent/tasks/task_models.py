@@ -62,15 +62,3 @@ class Task:
         step = TaskStep(step_id=str(uuid.uuid4()), description=description)
         self.steps.append(step)
         return step
-
-@dataclass
-class TaskCheckpoint:
-    """
-    Görevin önemli noktalarında alınan snapshot.
-    context_snapshot: O andaki task context'inin kopyası
-    """
-    checkpoint_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    task_id: str = ""
-    status: TaskStatus = TaskStatus.PLANNED
-    context_snapshot: Dict[str, Any] = field(default_factory=dict)
-    created_at: float = field(default_factory=time.time)

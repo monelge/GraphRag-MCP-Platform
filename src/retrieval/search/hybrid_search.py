@@ -1,3 +1,4 @@
+from __future__ import annotations
 from qdrant_client.models import (
     SparseVector,
     Prefetch,

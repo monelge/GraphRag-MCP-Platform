@@ -1,3 +1,4 @@
+from __future__ import annotations
 from openai import AsyncOpenAI
 import asyncio
 import os
@@ -56,12 +57,13 @@ class DenseEmbedder:
                 response = await self.client.embeddings.create(
                     model=self.model, input=text
                 )
-                # Bazı OpenRouter yanıtlarında data listesi boş gelebilir
-                if not response.data:
+                # Bazı OpenRouter yanıtlarında data listesi boş ya da None gelebilir
+                if not response or not response.data:
                     return [0.0] * int(os.getenv("EMBEDDING_DIM", "1536"))
                 return response.data[0].embedding
-            except ValueError as e:
-                # "No embedding data received" — metni küçülterek bir kez daha dene
+            except (ValueError, TypeError) as e:
+                # "No embedding data received" veya NoneType parse hatası —
+                # metni küçülterek bir kez daha dene
                 if attempt == 0:
                     text = text[:len(text) // 2]
                     continue
@@ -74,8 +76,8 @@ class DenseEmbedder:
                 elif attempt < retries - 1:
                     await asyncio.sleep(1)
                 else:
-                    raise
-        raise RuntimeError("embed_one başarısız oldu")
+                    # Son denemede de başarısız — sıfır vektör döndür, indekslemeyi durdurma
+                    return [0.0] * int(os.getenv("EMBEDDING_DIM", "1536"))
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """

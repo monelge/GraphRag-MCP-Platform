@@ -2,18 +2,11 @@ import logging
 from typing import List, Dict, Any, Optional
 from src.shared.llm_client import get_llm_client
 from src.storage.episodic_store import EpisodicStore, MemoryEntry
-from src.agent.tasks.task_models import TaskCheckpoint
 
 logger = logging.getLogger(__name__)
 
 class MemoryCompactor:
-    """
-    Bellek kaydı birleştirici — benzer kayıtları özet hale getir.
-    
-    Faz 3: Checkpoint compaction stratejisi
-    - TaskCheckpoint context'ini periyodik olarak temizle
-    - Eski snapshot'ları üreteç çıktılarına dönüştür
-    """
+    """Bellek kaydı birleştirici — benzer kayıtları özet hale getir."""
     
     def __init__(self, episodic_store: EpisodicStore):
         self.store = episodic_store
@@ -67,27 +60,6 @@ class MemoryCompactor:
         )
         return response.choices[0].message.content.strip()
 
-    async def compact_checkpoints(self, task_id: str, max_snapshots: int = 10) -> str:
-        """
-        Faz 3: Task checkpoint'larını kompakt hale getir.
-        Çok eski snapshot'ları özetleri içeren MemoryEntry'ye dönüştür.
-        
-        Örnek: Son 10 checkpoint yeterli, eski olanları archiv et.
-        """
-        try:
-            # Not: task_store'da getCheckpointsByTask metodu implement edilmesi gerekir
-            logger.info(f"Task {task_id} checkpoint'ları {max_snapshots}'e kadar temizleniyor")
-            
-            # Şu an placeholder — gerçeklerinde:
-            # 1. task_id'ye ait tüm checkpoint'ları al
-            # 2. Eski olanları seç (created_at'e göre sort et)
-            # 3. Eski snapshot'ları MemoryEntry'ye dönüştür
-            # 4. Archive'a taşı
-            
-            return f"✅ Task {task_id} checkpoint'ları optimize edildi"
-        except Exception as e:
-            logger.error(f"Checkpoint compaction hatası (task {task_id}): {e}")
-            return f"❌ Checkpoint compaction başarısız: {e}"
 
     async def prune_expired_memory(self, collection: str) -> str:
         """

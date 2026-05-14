@@ -1,7 +1,7 @@
 import logging
 import time
 from typing import Optional, Callable, Dict, Any
-from src.agent.tasks.task_models import Task, TaskStatus, TaskStep, TaskCheckpoint
+from src.agent.tasks.task_models import Task, TaskStatus, TaskStep
 from src.agent.tasks.task_store import TaskStore
 from src.storage.episodic_store import EpisodicStore, MemoryEntry
 
@@ -10,11 +10,7 @@ logger = logging.getLogger(__name__)
 class TaskOrchestrator:
     """
     Görev yöneticisi — Task yaşam döngüsü ve handler execution.
-    
-    Faz 3 Özellikleri:
-    - Memory lookup: Görev başında benzer deneyimleri ara
-    - Learning: Başarılı adımları belleğe kaydet
-    - Rollback: Checkpoint'dan restore mekanizması
+    Bellek lookup ve başarılı adım learning desteği içerir.
     """
     
     def __init__(self, task_store: TaskStore, episodic_store: Optional[EpisodicStore] = None):
@@ -99,8 +95,7 @@ class TaskOrchestrator:
             await self.store.save_task(task)
             return task
 
-        # Checkpoint oluştur (Hata durumunda geri dönebilmek için)
-        await self.checkpoint(task)
+        # Checkpoint oluştur kaldırıldı — run_step pipeline aktif olmadığından gereksiz
 
         try:
             # Handler adım sonucunu ve yeni status'u döner
@@ -156,78 +151,6 @@ class TaskOrchestrator:
             logger.info(f"Adım {step.step_id} belleğe kaydedildi (task {task.task_id})")
         except Exception as e:
             logger.warning(f"Learning hatası (step {step.step_id}): {e}")
-
-    async def checkpoint(self, task: Task):
-        """Checkpoint oluştur — geri dönüş için."""
-        checkpoint = TaskCheckpoint(
-            task_id=task.task_id,
-            status=task.status,
-            context_snapshot=task.context.copy()
-        )
-        await self.store.create_checkpoint(checkpoint)
-        logger.info(f"Checkpoint oluşturuldu: {checkpoint.checkpoint_id} for task {task.task_id}")
-
-    async def rollback_to_checkpoint(self, task_id: str, checkpoint_id: str) -> bool:
-        """
-        Faz 3: Belirtilen checkpoint'tan geri dön.
-        Task context'i restore et, adımları reset et.
-        
-        Süreç:
-        1. Checkpoint'ı yükle
-        2. Task context'ini restore et
-        3. Adımları PLANNED durumuna döndür
-        4. Task status'unu RETRIEVING'e (başlangıç) döndür
-        5. Veritabanına kaydet
-        """
-        task = await self.store.get_task(task_id)
-        if not task:
-            logger.warning(f"Rollback: Task bulunamadı ({task_id})")
-            return False
-        
-        try:
-            # Checkpoint'ları yükle ve belirtileni bul
-            checkpoints = await self.store.get_checkpoints_by_task(task_id)
-            target_checkpoint = None
-            
-            for cp in checkpoints:
-                if cp.checkpoint_id == checkpoint_id:
-                    target_checkpoint = cp
-                    break
-            
-            if not target_checkpoint:
-                logger.warning(f"Rollback: Checkpoint bulunamadı ({checkpoint_id})")
-                return False
-            
-            # Context restore
-            task.context = target_checkpoint.context_snapshot.copy()
-            task.status = TaskStatus.PLANNED
-            
-            # İlk adımı reset et
-            for i, step in enumerate(task.steps):
-                if i == 0:
-                    step.status = TaskStatus.PLANNED
-                    step.result = None
-                    step.completed_at = None
-                    step.started_at = None
-                    break
-                else:
-                    step.status = TaskStatus.PLANNED
-                    step.result = None
-                    step.completed_at = None
-            
-            # Metadata'ya rollback bilgisini ekle
-            task.metadata["last_rollback"] = {
-                "checkpoint_id": checkpoint_id,
-                "timestamp": time.time(),
-                "context_keys": list(task.context.keys())
-            }
-            
-            await self.store.save_task(task)
-            logger.info(f"✅ Rollback başarılı (task {task_id} → checkpoint {checkpoint_id})")
-            return True
-        except Exception as e:
-            logger.error(f"Rollback hatası (task {task_id}): {e}")
-            return False
 
     async def approve_task(self, task_id: str, next_status: TaskStatus = TaskStatus.EXECUTING):
         """Task onayı — WAITING_APPROVAL'dan ilerle."""

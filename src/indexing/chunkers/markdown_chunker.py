@@ -12,6 +12,7 @@ Temel kurallar:
   3. Chunk boyutu: 300–800 token (~1200–3200 karakter; 1 token ≈ 4 karakter)
   4. SecretScanner: risk > 0.8 → chunk atlanır
 """
+from __future__ import annotations
 
 import hashlib
 import os

@@ -14,6 +14,7 @@ Rewrite kriterleri (herhangi biri yeterliyse rewrite yap):
   2. teknik keyword YOKSA ve doğal dil sinyali VARSA
   3. top1 retrieval score düşükse (dışarıdan geçirilir)
 """
+from __future__ import annotations
 
 import re
 from typing import Literal

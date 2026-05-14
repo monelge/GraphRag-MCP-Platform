@@ -7,6 +7,7 @@ Neden bu dosya var?
     1. Indexer: risk_score > 0.8 → chunk atlanır, security_skip_log'a düşer
     2. Output redaction: search sonuçları LLM'e gönderilmeden önce bir kez daha taranır
 """
+from __future__ import annotations
 
 import re
 import logging

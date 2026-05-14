@@ -26,14 +26,37 @@ class Neo4jStore:
         self.user = os.getenv("NEO4J_USER", "neo4j")
         self.password = os.getenv("NEO4J_PASSWORD", "password")
         self.driver = None
-        # Her proje kendi collection adıyla Neo4j'de izole tutulur
-        self.collection = collection
+        # Varsayılan collection yalnızca geriye dönük uyumluluk için tutulur.
+        self._default_collection = collection
 
-    async def connect(self):
-        if not self.driver:
-            self.driver = AsyncGraphDatabase.driver(self.uri, auth=(self.user, self.password))
-            # Bağlantıyı doğrula
-            await self.driver.verify_connectivity()
+    async def connect(self, max_retries: int = 10, retry_delay: float = 3.0):
+        """
+        Neo4j'ye bağlanır. Container henüz hazır değilse max_retries kez dener.
+        Neden retry? Docker Compose'da neo4j container'ı graph-mcp'den geç ayağa
+        kalkabiliyor; ilk bağlantı denemesi ConnectionRefusedError verebilir.
+        """
+        import asyncio
+        if self.driver:
+            return
+        self.driver = AsyncGraphDatabase.driver(self.uri, auth=(self.user, self.password))
+        last_exc: Exception | None = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                await self.driver.verify_connectivity()
+                await self.create_constraints()
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    logger.warning(
+                        f"Neo4j bağlantısı bekleniyor ({attempt}/{max_retries}) — "
+                        f"{retry_delay:.0f}s sonra tekrar denenecek. Hata: {exc}"
+                    )
+                    await asyncio.sleep(retry_delay)
+        # Tüm denemeler başarısız
+        await self.driver.close()
+        self.driver = None
+        raise last_exc
 
     async def close(self):
         if self.driver:
@@ -54,10 +77,15 @@ class Neo4jStore:
         return await self.execute_query(query, parameters)
 
     async def create_constraints(self):
-        """Performans ve veri bütünlüğü için temel Neo4j kısıtlamalarını oluşturur."""
+        """Performans ve veri bütünlüğü için temel Neo4j kısıtlamalarını oluşturur.
+        
+        NOT: Property existence constraints (IS NOT NULL) sadece Enterprise Edition'da
+        çalışır. Community Edition için uniqueness constraints kullanıyoruz.
+        """
+        # Community Edition'da desteklenen uniqueness constraints
         constraints = [
-            "CREATE CONSTRAINT IF NOT EXISTS FOR (n:CodeEntity) REQUIRE n.name IS NOT NULL",
-            "CREATE CONSTRAINT IF NOT EXISTS FOR (n:File) REQUIRE n.path IS NOT NULL",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (n:CodeEntity) REQUIRE n.name IS UNIQUE",
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (n:File) REQUIRE n.path IS UNIQUE",
         ]
         # collection bazlı sorgular için composite index — proje izolasyonu
         indexes = [
@@ -75,16 +103,20 @@ class Neo4jStore:
                 # Constraint/index zaten varsa ya da desteklenmiyorsa sessizce geç
                 logger.debug("Constraint/index oluşturulamadı (görmezden gelindi): %s", e)
 
-    async def upsert_nodes_and_relationships(self, relations: list[dict]):
+    async def upsert_nodes_and_relationships(
+        self,
+        relations: list[dict],
+        collection: str = "",
+    ):
         """Extractor'dan gelen ilişkileri ve nodeları Neo4j'ye yazar.
 
-        Her node'a collection property eklenir — farklı projeler aynı Neo4j
-        instance'ında karışmaz. MERGE anahtarı (name + collection) çiftidir.
+        collection parametresi çağrı bazında verilir; böylece store instance'ı
+        üzerinde paylaşılan mutable state tutulmaz.
         """
         if not self.driver:
             await self.connect()
 
-        coll = self.collection or "default"
+        coll = collection or self._default_collection or "default"
 
         async with self.driver.session() as session:
             for rel in relations:

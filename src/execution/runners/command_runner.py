@@ -8,7 +8,14 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_COMMANDS = {"/usr/bin/python3", "/usr/bin/node", "/bin/bash"}
+ALLOWED_COMMANDS = {
+    "/usr/bin/python3",
+    "/usr/local/bin/python3",  # macOS Homebrew / Docker base image alternatif yolu
+    "/usr/bin/node",
+    "/usr/local/bin/node",     # macOS Homebrew / Docker base image alternatif yolu
+    "/bin/bash",
+    "/usr/bin/bash",
+}
 _BLOCKED_BASH_FLAGS = {"-c", "-lc"}
 
 @dataclass

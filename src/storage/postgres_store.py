@@ -69,19 +69,10 @@ CREATE TABLE IF NOT EXISTS task_steps (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS task_checkpoints (
-    checkpoint_id       TEXT PRIMARY KEY,
-    task_id             TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
-    status              TEXT NOT NULL CHECK (status IN ('planned', 'retrieving', 'analyzing', 'waiting_approval', 'executing', 'verifying', 'summarizing', 'done', 'failed', 'aborted')),
-    context_snapshot    JSONB DEFAULT '{}',
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_collection ON tasks(collection);
 CREATE INDEX IF NOT EXISTS idx_task_steps_task_id ON task_steps(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_steps_status ON task_steps(status);
-CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task_id ON task_checkpoints(task_id);
 """
 
 

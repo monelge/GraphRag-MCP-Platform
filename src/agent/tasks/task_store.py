@@ -3,13 +3,13 @@ import logging
 import asyncpg
 from typing import List, Optional
 from src.storage.postgres_store import PostgresStore
-from src.agent.tasks.task_models import Task, TaskStatus, TaskStep, TaskCheckpoint
+from src.agent.tasks.task_models import Task, TaskStatus, TaskStep
 
 logger = logging.getLogger(__name__)
 
 class TaskStore:
     """
-    Task ve checkpoint'leri PostgreSQL'de saklayan asynchronous depo.
+    Task ve adımlarını PostgreSQL'de saklayan asynchronous depo.
     
     Faz 2 İyileştirmeler:
     - Error handling: Task bulunamadığında graceful fallback
@@ -183,109 +183,3 @@ class TaskStore:
             logger.error("Görevler listelenirken beklenmeyen hata: %s", str(e))
             return []
 
-    async def create_checkpoint(self, checkpoint: TaskCheckpoint) -> bool:
-        """
-        Görev checkpoint'i oluşturur.
-        Context snapshot'ı JSONB olarak kaydeder.
-        """
-        if not self.pg.available:
-            logger.warning("PostgreSQL kullanılamıyor, checkpoint %s kaydedilemiyor", checkpoint.checkpoint_id)
-            return False
-        
-        try:
-            async with self.pg._pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO task_checkpoints (checkpoint_id, task_id, status, context_snapshot)
-                    VALUES ($1, $2, $3, $4)
-                    """,
-                    checkpoint.checkpoint_id, 
-                    checkpoint.task_id, 
-                    checkpoint.status.value,
-                    json.dumps(checkpoint.context_snapshot, ensure_ascii=False)
-                )
-            return True
-        except asyncpg.PostgresError as e:
-            logger.error("Checkpoint %s kaydedilirken PostgreSQL hatası: %s", checkpoint.checkpoint_id, str(e))
-            return False
-        except Exception as e:
-            logger.error("Checkpoint %s kaydedilirken beklenmeyen hata: %s", checkpoint.checkpoint_id, str(e))
-            return False
-
-    async def get_checkpoints_by_task(self, task_id: str) -> List[TaskCheckpoint]:
-        """
-        Faz 3: Belirtilen task ID'ye ait tüm checkpoint'ları döner.
-        Oluşturulma zamanına göre DESC sıralanmış.
-        """
-        if not self.pg.available:
-            logger.debug("PostgreSQL kullanılamıyor, checkpoint'lar yüklenemedi")
-            return []
-        
-        try:
-            async with self.pg._pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT * FROM task_checkpoints 
-                    WHERE task_id = $1 
-                    ORDER BY created_at DESC
-                    """,
-                    task_id
-                )
-                
-                checkpoints = []
-                for row in rows:
-                    context_snapshot = json.loads(row["context_snapshot"]) if row["context_snapshot"] else {}
-                    checkpoint = TaskCheckpoint(
-                        checkpoint_id=row["checkpoint_id"],
-                        task_id=row["task_id"],
-                        status=TaskStatus(row["status"]),
-                        context_snapshot=context_snapshot,
-                        created_at=row["created_at"].timestamp()
-                    )
-                    checkpoints.append(checkpoint)
-                
-                logger.info(f"Task {task_id} için {len(checkpoints)} checkpoint bulundu")
-                return checkpoints
-        except asyncpg.PostgresError as e:
-            logger.error("Checkpoint'lar yüklenirken PostgreSQL hatası (task %s): %s", task_id, str(e))
-            return []
-        except (ValueError, KeyError) as e:
-            logger.error("Checkpoint verisi parse edilirken hata (task %s): %s", task_id, str(e))
-            return []
-        except Exception as e:
-            logger.error("Checkpoint'lar yüklenirken beklenmeyen hata (task %s): %s", task_id, str(e))
-            return []
-
-    async def delete_old_checkpoints(self, task_id: str, keep_count: int = 10) -> int:
-        """
-        Faz 3: Eski checkpoint'ları sil, yalnızca son keep_count'u sakla.
-        Compaction stratejisi: DB boyutunu kontrolde tut.
-        """
-        if not self.pg.available:
-            logger.debug("PostgreSQL kullanılamıyor, cleanup yapılamadı")
-            return 0
-        
-        try:
-            async with self.pg._pool.acquire() as conn:
-                # Silinecek checkpoint'ları bul
-                delete_result = await conn.execute(
-                    """
-                    DELETE FROM task_checkpoints 
-                    WHERE checkpoint_id IN (
-                        SELECT checkpoint_id FROM task_checkpoints 
-                        WHERE task_id = $1 
-                        ORDER BY created_at DESC 
-                        LIMIT -1 OFFSET $2
-                    )
-                    """,
-                    task_id,
-                    keep_count
-                )
-                
-                # asyncpg'de DELETE sonucu string formatında döner "DELETE X"
-                deleted_count = int(delete_result.split()[-1]) if delete_result else 0
-                logger.info(f"Task {task_id}: {deleted_count} eski checkpoint silindi (keep_count={keep_count})")
-                return deleted_count
-        except Exception as e:
-            logger.error("Checkpoint cleanup hatası (task %s): %s", task_id, str(e))
-            return 0

@@ -9,6 +9,7 @@ Neden iki ayrı TTL?
 Redis yoksa veya bağlantı hatalıysa tüm metodlar sessizce no-op döner;
 hiçbir zaman exception fırlatmaz — cache her zaman "nice to have" katmanıdır.
 """
+from __future__ import annotations
 
 import hashlib
 import json
