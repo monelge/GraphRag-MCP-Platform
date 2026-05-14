@@ -23,6 +23,11 @@ class DailyBudget:
     max_tokens: int = 1_000_000
 
 
+
+
+class BudgetExceededError(RuntimeError):
+    """Görev veya günlük bütçe aşıldığında fırlatılır."""
+
 class BudgetManager:
     """Env tabanlı limitleri okuyup in-memory sayaçlarla doğrular."""
 
@@ -47,9 +52,9 @@ class BudgetManager:
             next_tokens = current["tokens"] + max(tokens_used, 0)
             next_calls = current["llm_calls"] + 1
             if next_tokens > self.task_budget.max_tokens:
-                return False
+                raise BudgetExceededError(f"Task token bütçesi aşıldı: {task_id}")
             if next_calls > self.task_budget.max_llm_calls:
-                return False
+                raise BudgetExceededError(f"Task LLM çağrı bütçesi aşıldı: {task_id}")
             current["tokens"] = next_tokens
             current["llm_calls"] = next_calls
             return True
@@ -60,9 +65,9 @@ class BudgetManager:
             next_tokens = self._daily_usage["tokens"] + max(tokens_used, 0)
             next_cost = self._daily_usage["cost_usd"] + max(cost_usd, 0.0)
             if next_tokens > self.daily_budget.max_tokens:
-                return False
+                raise BudgetExceededError("Günlük token bütçesi aşıldı")
             if next_cost > self.daily_budget.max_cost_usd:
-                return False
+                raise BudgetExceededError("Günlük maliyet bütçesi aşıldı")
             self._daily_usage["tokens"] = next_tokens
             self._daily_usage["cost_usd"] = next_cost
             return True

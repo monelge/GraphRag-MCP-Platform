@@ -18,6 +18,8 @@ Skorlama formülü (ağırlıklı):
 from __future__ import annotations
 import re
 
+from src.retrieval.ranking.scorer import ScoreNormalizer
+
 
 def _tokenize(text: str) -> list[str]:
     """Metni küçük harfe çevirip alfanümerik token'lara böler."""
@@ -86,4 +88,7 @@ class LocalReranker:
             key=lambda c: (c["rerank_score"], c.get("score", 0.0)),
             reverse=True,
         )
-        return scored[:top_n]
+        results = scored[:top_n]
+        normalizer = ScoreNormalizer()
+        results = normalizer.normalize(results, strategy="minmax")
+        return results

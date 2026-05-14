@@ -13,7 +13,7 @@ class LocalSearcher:
     def __init__(self, collection: str = "codebase", top_k_fetch: int = 20):
         self.searcher = HybridSearcher(collection=collection, top_k_fetch=top_k_fetch)
 
-    async def search(self, query: str, collection: str, top_k: int = 5) -> list[dict]:
+    async def search(self, query: str, collection: str = "", top_k: int = 5, query_filter=None) -> list[dict]:
         """Belirli dosya veya fonksiyon aramalarında sadece kod chunk'larını döndürür."""
         if collection and collection != self.searcher.store.collection:
             self.searcher = HybridSearcher(collection=collection, top_k_fetch=max(top_k * 4, 20))

@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, Optional
 from src.agent.orchestrator.checkpoints import CheckpointStore
 from src.agent.tasks.task_store import TaskStore
 from src.control.evals.dataset_manager import DatasetManager
+from src.control.models.budgets import BudgetManager
 from src.control.models.gateway import ModelGateway
+from src.control.observability.audit import AuditLogger
+from src.control.observability.metrics import MetricsCollector
 from src.control.observability.tracer import PipelineTracer
 from src.execution.runners.command_runner import CommandRunner
 from src.execution.sandbox.runtime_manager import SandboxRuntimeManager
@@ -46,3 +49,6 @@ class AppContext:
     tracer: type[PipelineTracer]
     checkpoint_store: Optional[CheckpointStore] = None
     retrieval_handler: Optional[object] = None
+    audit_logger: Optional[AuditLogger] = None
+    metrics: Optional[MetricsCollector] = None
+    budget_manager: Optional[BudgetManager] = None

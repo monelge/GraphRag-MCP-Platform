@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from src.agent.tasks.task_models import TaskStatus
 from src.control.evals.runner import EvalRunner
+from src.execution.runners.build_runner import BuildRunner
+from src.execution.runners.test_runner import TestRunner
 from src.handlers.context import AppContext
 from src.handlers.retrieval_handler import RetrievalHandler
 
@@ -12,6 +14,8 @@ class ExecutionHandler:
     def __init__(self, ctx: AppContext, retrieval: RetrievalHandler):
         self.ctx = ctx
         self.retrieval = retrieval
+        self.build_runner = BuildRunner(ctx.runtime_manager)
+        self.test_runner = TestRunner(ctx.runtime_manager)
 
     def register_default_handlers(self) -> None:
         """Eski handler tabanlı akış için no-op uyumluluk bırakılır."""
@@ -43,10 +47,16 @@ class ExecutionHandler:
         return "\n".join(lines)
 
     async def approve_task_step(self, task_id: str, feedback: str = "approved") -> str:
-        return await self.ctx.orchestrator.approve_task(task_id, feedback)
+        result = await self.ctx.orchestrator.approve_task(task_id, feedback)
+        if self.ctx.audit_logger:
+            self.ctx.audit_logger.log("approval_decision", task_id=task_id, summary=feedback)
+        return result
 
     async def complete_task(self, task_id: str, note: str = "") -> str:
-        return await self.ctx.orchestrator.complete_task(task_id, note)
+        result = await self.ctx.orchestrator.complete_task(task_id, note)
+        if self.ctx.audit_logger:
+            self.ctx.audit_logger.log("approval_decision", task_id=task_id, summary=note)
+        return result
 
     async def resume_task(self, task_id: str) -> str:
         """Son checkpoint'ten görevi devam ettirir."""
@@ -97,14 +107,14 @@ class ExecutionHandler:
         output = [f"## 🛠️ Doğrulama Planı — {profile_name.upper()}\n"]
         if run_build:
             output.append(f"### 📦 Build ({profile.build_cmd})")
-            result = await self.ctx.runtime_manager.run_build(project_path)
+            result = await self.build_runner.run(project_path)
             output.append(f"**Durum:** {'✅ Başarılı' if result.success else '❌ Başarısız'}")
             if not result.success:
                 output.append(f"```text\n{result.stderr or result.stdout[:500]}\n```")
                 return "\n".join(output)
         if run_tests:
             output.append(f"\n### 🧪 Test ({profile.test_cmd})")
-            result = await self.ctx.runtime_manager.run_tests(project_path)
+            result = await self.test_runner.run(project_path)
             output.append(f"**Durum:** {'✅ Başarılı' if result.success else '❌ Başarısız'}")
             if result.stdout or result.stderr:
                 output.append(f"```text\n{(result.stdout + result.stderr)[:1000]}\n```")

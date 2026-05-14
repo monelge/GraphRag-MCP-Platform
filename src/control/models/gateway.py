@@ -11,6 +11,7 @@ from src.control.models.model_router import get_model
 from src.shared.config import config
 
 if TYPE_CHECKING:
+    from src.control.models.budgets import BudgetManager
     from src.storage.postgres_store import PostgresStore
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ class ModelGateway:
         # Token loglarını DB'ye yazmak için opsiyonel store referansı.
         # server.py init sonrası set edilir (circular import önlemek için).
         self._pg: Optional["PostgresStore"] = postgres_store
+        self._budget_manager: Optional["BudgetManager"] = None
         self.client = AsyncOpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
@@ -47,6 +49,10 @@ class ModelGateway:
         """Circular import olmadan lifespan sonrası store bağlar."""
         self._pg = pg
 
+    def set_budget_manager(self, bm: "BudgetManager") -> None:
+        """Görev bazlı token bütçesi denetleyicisini bağlar."""
+        self._budget_manager = bm
+
     async def chat_completion(
         self,
         task: str,
@@ -55,6 +61,10 @@ class ModelGateway:
         node_name: str = None,
         **kwargs,
     ):
+        if self._budget_manager and task_id:
+            total_used = self._stats.get("total_tokens", 0)
+            self._budget_manager.check_task(task_id, total_used)
+
         model = get_model(task)
         if not model:
             raise ValueError(f"Task '{task}' için model tanımlı değil veya yerel (local) bir işlem.")

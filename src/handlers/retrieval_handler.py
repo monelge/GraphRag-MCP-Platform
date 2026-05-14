@@ -13,6 +13,7 @@ from src.retrieval.context.context_builder import ContextBuilder
 from src.retrieval.context.token_budget import get_budget_chars
 from src.retrieval.ranking.answerability import Confidence, assess as assess_answerability
 from src.retrieval.search.graph_expansion import GraphExpander
+from src.retrieval.search.global_search import GlobalSearcher
 from src.retrieval.search.hybrid_search import (
     CODE_ONLY_FILTER,
     Filter as QFilter,
@@ -21,6 +22,7 @@ from src.retrieval.search.hybrid_search import (
     MatchValue as QMV,
 )
 from src.retrieval.search.hyde import expand_query as hyde_expand, hyde_retrieve
+from src.retrieval.search.local_search import LocalSearcher
 from src.retrieval.search.query_classifier import TOP_K_BY_TYPE, classify as classify_query, should_rewrite
 from src.shared.llm_client import get_llm_client
 
@@ -98,9 +100,18 @@ class RetrievalHandler:
             except Exception:
                 effective_query = query
 
-        searcher = HybridSearcher(collection=collection)
+        if query_type in ("factual_doc", "config_lookup"):
+            searcher = LocalSearcher(collection=collection)
+            search_mode = "local"
+        elif query_type == "broad_summary":
+            searcher = GlobalSearcher(collection=collection)
+            search_mode = "global"
+        else:
+            searcher = HybridSearcher(collection=collection)
+            search_mode = "hybrid"
+
         with tracer.step("retrieval"):
-            if expansions:
+            if expansions and search_mode == "hybrid":
                 candidates = await hyde_retrieve(
                     query=query,
                     expansions=expansions,
@@ -108,13 +119,25 @@ class RetrievalHandler:
                     query_filter=CODE_ONLY_FILTER,
                     top_k=top_k,
                 )
-            else:
+            elif expansions:
+                seen: dict[str, dict] = {}
+                for current_query in [query, *expansions]:
+                    batch = await searcher.search(current_query, collection=collection, top_k=top_k)
+                    for chunk in batch:
+                        key = f"{chunk.get('file', '')}:{chunk.get('name', '')}:{chunk.get('lines', '')}"
+                        existing = seen.get(key)
+                        if existing is None or float(chunk.get('score', 0.0) or 0.0) > float(existing.get('score', 0.0) or 0.0):
+                            seen[key] = chunk
+                candidates = sorted(seen.values(), key=lambda item: float(item.get('score', 0.0) or 0.0), reverse=True)[: top_k * 2]
+            elif search_mode == "hybrid":
                 candidates = await searcher.search(
                     effective_query,
                     top_k=top_k,
                     fetch_k=top_k * 2,
                     query_filter=CODE_ONLY_FILTER,
                 )
+            else:
+                candidates = await searcher.search(effective_query, collection=collection, top_k=top_k)
             tracer.record("retrieval", item_count=len(candidates))
 
         if not candidates:
@@ -182,6 +205,20 @@ class RetrievalHandler:
             header += f"\n> 🔍 HyDE expansion: _{', '.join(expansions[:2])}_"
         if assessment.confidence.value == "weak":
             header += f"\n> ⚠️ {assessment.reason}"
+
+        if self.ctx.audit_logger:
+            self.ctx.audit_logger.log(
+                "retrieval_request",
+                collection=collection,
+                summary=f"query_type={query_type} top_k={top_k} hits={len(final_chunks)}",
+            )
+        if self.ctx.metrics:
+            self.ctx.metrics.record_retrieval(
+                collection,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                hit_count=len(final_chunks),
+                token_count=total_chars // 4,
+            )
 
         output = [header + "\n"]
         for result in final_chunks:

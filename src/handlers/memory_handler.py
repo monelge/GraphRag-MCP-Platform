@@ -4,7 +4,10 @@ import time
 
 from src.handlers.context import AppContext
 from src.memory.models.memory_models import MemoryEntry
+from src.memory.services.memory_recall import MemoryRecall
+from src.memory.services.memory_writer import MemoryWriter
 from src.memory.stores.decision_store import DecisionStore
+from src.memory.stores.semantic_memory_store import SemanticMemoryStore
 
 
 class MemoryHandler:
@@ -13,6 +16,9 @@ class MemoryHandler:
     def __init__(self, ctx: AppContext):
         self.ctx = ctx
         self.decision_store = DecisionStore(ctx.episodic)
+        self.memory_writer = MemoryWriter(ctx.episodic)
+        self.memory_recall = MemoryRecall(ctx.episodic)
+        self.semantic_store = SemanticMemoryStore()
 
     async def store_memory(self, title: str, content: str, memory_type: str = "general", tags=None, collection: str = "", module: str = "", commit_sha: str = "", provenance: str = "", valid_days: int = None, status: str = "active") -> str:
         valid_to = time.time() + (valid_days * 86400) if valid_days else None
@@ -28,10 +34,14 @@ class MemoryHandler:
             valid_to=valid_to,
             status=status,
         )
-        return await self.ctx.episodic.store_memory(entry, redis_store=self.ctx.redis)
+        if self.ctx.audit_logger:
+            self.ctx.audit_logger.log("memory_write", collection=collection, summary=title)
+        if memory_type == "semantic":
+            return await self.semantic_store.store_semantic(entry, redis_store=self.ctx.redis)
+        return await self.memory_writer.write(entry, redis_store=self.ctx.redis)
 
     async def recall_memory(self, query: str, memory_type: str = None, memory_layer: str = None, collection: str = "", include_invalid: bool = False, top_k: int = 5) -> str:
-        entries = await self.ctx.episodic.search_memory(
+        entries = await self.memory_recall.recall(
             query,
             memory_type=memory_type,
             memory_layer=memory_layer,

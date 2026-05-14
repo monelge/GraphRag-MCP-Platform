@@ -8,7 +8,10 @@ from src.agent.orchestrator.checkpoints import CheckpointStore
 from src.agent.orchestrator.state_machine import TaskOrchestrator
 from src.agent.tasks.task_store import TaskStore
 from src.control.evals.dataset_manager import DatasetManager
+from src.control.models.budgets import BudgetManager
 from src.control.models.gateway import ModelGateway
+from src.control.observability.audit import AuditLogger
+from src.control.observability.metrics import get_metrics
 from src.control.observability.tracer import PipelineTracer
 from src.execution.runners.command_runner import CommandRunner
 from src.execution.sandbox.runtime_manager import SandboxRuntimeManager
@@ -67,7 +70,11 @@ _orchestrator = TaskOrchestrator(_task_store, episodic_store=_episodic, checkpoi
 _command_runner = CommandRunner()
 _runtime_manager = SandboxRuntimeManager(_command_runner)
 _model_gateway = ModelGateway()
+_audit = AuditLogger()
+_metrics = get_metrics()
+_budget_manager = BudgetManager()
 _model_gateway.set_postgres(_postgres)
+_model_gateway.set_budget_manager(_budget_manager)
 _dataset_manager = DatasetManager()
 _reranker = LocalReranker()
 _deduplicator = SemanticDeduplicator()
@@ -93,6 +100,9 @@ _app_ctx = AppContext(
     impact_analyzer=_impact_analyzer,
     tracer=_tracer,
     checkpoint_store=_checkpoint_store,
+    audit_logger=_audit,
+    metrics=_metrics,
+    budget_manager=_budget_manager,
 )
 
 _indexing = IndexingHandler(_app_ctx)
@@ -111,6 +121,7 @@ _orchestrator.app_context = _app_ctx
 @asynccontextmanager
 async def _lifespan(server):
     logger.info("MCP server başlatılıyor", extra={"server": "graph-mcp"})
+    _audit.set_postgres(_postgres)
     await _postgres.connect()
     await _neo4j.connect()
     try:

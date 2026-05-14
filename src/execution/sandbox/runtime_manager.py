@@ -2,6 +2,7 @@ import logging
 from typing import Optional, List, Dict
 from pathlib import Path
 from src.execution.runners.command_runner import CommandRunner, ExecutionResult
+from src.execution.sandbox.mount_policy import MountPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ PROFILES = {
 class SandboxRuntimeManager:
     def __init__(self, runner: CommandRunner):
         self.runner = runner
+        self.mount_policy = MountPolicy(allowed_paths=[str(Path.cwd())], readonly_paths=[str(Path.cwd())])
 
     def detect_profile(self, project_path: str) -> ExecutionProfile:
         root = Path(project_path)
@@ -67,13 +69,19 @@ class SandboxRuntimeManager:
         return PROFILES["python"] 
 
     async def run_build(self, project_path: str) -> ExecutionResult:
+        if not self.mount_policy.is_read_allowed(project_path):
+            raise PermissionError(f"Mount policy: {project_path} okuma iznine sahip değil")
         profile = self.detect_profile(project_path)
         return await self.runner.run(profile.build_cmd, cwd=project_path, env=profile.env_vars)
 
     async def run_tests(self, project_path: str) -> ExecutionResult:
+        if not self.mount_policy.is_read_allowed(project_path):
+            raise PermissionError(f"Mount policy: {project_path} okuma iznine sahip değil")
         profile = self.detect_profile(project_path)
         return await self.runner.run(profile.test_cmd, cwd=project_path, env=profile.env_vars)
 
     async def run_lint(self, project_path: str) -> ExecutionResult:
+        if not self.mount_policy.is_read_allowed(project_path):
+            raise PermissionError(f"Mount policy: {project_path} okuma iznine sahip değil")
         profile = self.detect_profile(project_path)
         return await self.runner.run(profile.lint_cmd, cwd=project_path, env=profile.env_vars)

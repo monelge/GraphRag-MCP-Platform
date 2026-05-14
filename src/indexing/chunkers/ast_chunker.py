@@ -7,6 +7,9 @@ import tree_sitter_python as tspython
 import tree_sitter_typescript as tsts
 import tree_sitter_c_sharp as tscs
 
+from src.indexing.normalization.language_detector import LanguageDetector
+from src.indexing.normalization.path_mapper import PathMapper
+
 from .chunk_models import CodeChunk
 
 logger = logging.getLogger(__name__)
@@ -41,6 +44,8 @@ class ASTChunker:
             "typescript": self._build_parser(tsts.language_typescript()),
             "csharp":     self._build_parser(tscs.language()),
         }
+        self._lang_detector = LanguageDetector()
+        self._path_mapper = PathMapper()
 
     def _build_parser(self, lang_obj) -> Parser:
         lang = Language(lang_obj)
@@ -52,9 +57,10 @@ class ASTChunker:
         Bir kaynak dosyayı AST üzerinden mantıksal bloklara böler.
         """
         path = Path(file_path)
-        lang = EXT_TO_LANG.get(path.suffix)
-        if not lang:
+        lang = self._lang_detector.detect(file_path)
+        if lang == "unknown":
             return []
+        lang = lang or EXT_TO_LANG.get(path.suffix)
 
         parser = self._parsers.get(lang)
         if not parser:
@@ -66,10 +72,11 @@ class ASTChunker:
         # Dosya seviyesindeki import'ları bir kez çıkar
         file_imports = self._extract_imports(tree.root_node, source, lang)
 
+        normalized_path = self._path_mapper.normalize(file_path)
         chunks: list[CodeChunk] = []
         target_types = CHUNK_NODE_TYPES.get(lang, set())
 
-        self._traverse_iterative(tree.root_node, source, lang, file_path,
+        self._traverse_iterative(tree.root_node, source, lang, normalized_path,
                                  target_types, chunks, file_imports)
         return chunks
 
