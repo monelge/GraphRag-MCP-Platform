@@ -65,31 +65,38 @@ docker exec graph-mcp python3 /app/scripts/index.py \
 
 ## reindex.py — Sıfırdan Yeniden İndeksleme
 
-⚠️ **Dikkat:** Mevcut koleksiyon verisini **kalıcı olarak siler**.
+> **⚠ DİKKAT:** Mevcut koleksiyon verisini **kalıcı olarak siler**.  
+> Zorunlu kullanıcı onayı vardır — atlatılamaz, `--yes` bayrağı **kaldırılmıştır**.
 
 ```bash
+# -it zorunlu — script klavye girişi bekler
 docker exec -it graph-mcp python3 /app/scripts/reindex.py \
     --project Vendoris \
     --path /projects/Vendoris
 ```
 
-Script çalışmadan önce onay sorar:
+Script çalışmadan önce **koleksiyon adını birebir yazdırmanızı** zorunlu kılar:
 
 ```
-⚠ UYARI — Sıfırdan Yeniden İndeksleme
-  Koleksiyon : Vendoris
-  ...
-'Vendoris' koleksiyonunu silip yeniden indekslemek istediğinizden emin misiniz? [y/n]:
+╭─ reindex.py — Kullanıcı Onayı Zorunlu ──────────────────────────────────╮
+│ ⚠ UYARI — Sıfırdan Yeniden İndeksleme                                   │
+│                                                                           │
+│   Koleksiyon : Vendoris                                                   │
+│   Proje yolu : /projects/Vendoris                                         │
+│                                                                           │
+│ Bu işlem:                                                                 │
+│   • Qdrant'taki 'Vendoris' koleksiyonunu tamamen siler                    │
+│   • Neo4j'deki 'Vendoris' node'larını tamamen siler                       │
+│   • Tüm dosyaları sıfırdan indeksler                                      │
+│                                                                           │
+│ Onaylamak için koleksiyon adını tam olarak yazın: Vendoris                │
+╰───────────────────────────────────────────────────────────────────────── ╯
+
+Koleksiyon adını yazın (Vendoris): _
 ```
 
-### Onay sormadan çalıştırma (CI/otomasyon)
-
-```bash
-docker exec graph-mcp python3 /app/scripts/reindex.py \
-    --project Vendoris \
-    --path /projects/Vendoris \
-    --yes
-```
+Yanlış isim girilirse script **iptal edilir**, hiçbir veri silinmez.  
+CI/otomasyon ortamlarında `reindex.py` kullanılmamalıdır — bunun yerine `index.py` tercih edin.
 
 ### Parametreler
 
@@ -98,7 +105,6 @@ docker exec graph-mcp python3 /app/scripts/reindex.py \
 | `--project` | ✅ | Koleksiyon adı | `Vendoris` |
 | `--path` | ✅ | Container içindeki proje dizini | `/projects/Vendoris` |
 | `--batch` | ❌ | Embedding batch boyutu (varsayılan: 32) | `16` |
-| `--yes` / `-y` | ❌ | Onay sormadan devam et | `--yes` |
 
 ---
 

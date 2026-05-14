@@ -3,19 +3,13 @@
 GraphMCP — Generic Proje Yeniden İndeksleme Scripti (Force / Sıfırdan)
 
 Kullanım:
-    docker exec graph-mcp python3 /app/scripts/reindex.py \
+    docker exec -it graph-mcp python3 /app/scripts/reindex.py \
         --project Vendoris \
         --path /projects/Vendoris
 
-Davranış:
-    - Qdrant'taki mevcut collection'ı tamamen siler ve sıfırdan oluşturur
-    - Neo4j'deki collection'a ait tüm node'ları siler
-    - Tüm dosyaları baştan indeksler (incremental değil)
-    - .agent/ dizini varsa agent docs da sıfırdan indekslenir
-    - Kaldığı yerden devam etmek için: index.py kullan
-
 ⚠ UYARI: Bu script mevcut collection verisini kalıcı olarak siler.
-          Yanlış proje adı verilirse veri kaybı yaşanır.
+          Çalıştırmadan önce koleksiyon adını manuel olarak onaylamanız gerekir.
+          Kaldığı yerden devam etmek için: index.py kullan
 """
 
 import asyncio
@@ -263,7 +257,7 @@ async def index_all_agent_docs(
     return stats
 
 
-async def run(project_name: str, project_path: str, batch_size: int, yes: bool) -> None:
+async def run(project_name: str, project_path: str, batch_size: int) -> None:
     path       = Path(project_path).resolve()
     collection = project_name.replace(" ", "_")
     start_time = time.monotonic()
@@ -272,7 +266,7 @@ async def run(project_name: str, project_path: str, batch_size: int, yes: bool) 
         console.print(f"[bold red]✗ Proje dizini bulunamadı: {path}[/]")
         sys.exit(1)
 
-    # ── Onay ─────────────────────────────────────────────────────────────────
+    # ── Zorunlu Onay (atlanamaz) ──────────────────────────────────────────────
     console.print(Panel(
         f"[bold red]⚠ UYARI — Sıfırdan Yeniden İndeksleme[/]\n\n"
         f"  Koleksiyon : [bold]{collection}[/]\n"
@@ -281,18 +275,20 @@ async def run(project_name: str, project_path: str, batch_size: int, yes: bool) 
         f"  • Qdrant'taki '{collection}' koleksiyonunu [bold red]tamamen siler[/]\n"
         f"  • Neo4j'deki '{collection}' node'larını [bold red]tamamen siler[/]\n"
         f"  • Tüm dosyaları sıfırdan indeksler\n\n"
+        f"[bold]Onaylamak için koleksiyon adını tam olarak yazın:[/] [cyan]{collection}[/]\n"
         f"[dim]Kaldığı yerden devam etmek için index.py kullanın.[/]",
         border_style="red",
-        title="[bold red]reindex.py[/]",
+        title="[bold red]reindex.py — Kullanıcı Onayı Zorunlu[/]",
     ))
 
-    if not yes:
-        confirmed = Confirm.ask(
-            f"\n[bold yellow]'{collection}' koleksiyonunu silip yeniden indekslemek istediğinizden emin misiniz?[/]"
-        )
-        if not confirmed:
-            console.print("[dim]İptal edildi.[/]")
-            sys.exit(0)
+    # Koleksiyon adını birebir yazdırma zorunluluğu — --yes bayrağı ile atlanamaz.
+    # Neden? Yanlışlıkla yanlış proje silinmesini önlemek için.
+    typed = console.input(f"\n[bold yellow]Koleksiyon adını yazın[/] ([cyan]{collection}[/]): ").strip()
+    if typed != collection:
+        console.print(f"[bold red]✗ Eşleşmedi. Beklenen: '{collection}' — Girilen: '{typed}'. İptal edildi.[/]")
+        sys.exit(1)
+
+    console.print(f"[green]✓ Onaylandı. İndeksleme başlıyor...[/]\n")
 
     # ── Bağlantılar ──────────────────────────────────────────────────────────
     redis = RedisStore()
@@ -351,10 +347,9 @@ def main() -> None:
     parser.add_argument("--project", required=True, help="Koleksiyon adı (örn: Vendoris)")
     parser.add_argument("--path",    required=True, help="Proje dizini (örn: /projects/Vendoris)")
     parser.add_argument("--batch",   type=int, default=32, help="Embedding batch boyutu (varsayılan: 32)")
-    parser.add_argument("--yes", "-y", action="store_true", help="Onay sormadan devam et")
     args = parser.parse_args()
 
-    asyncio.run(run(args.project, args.path, args.batch, args.yes))
+    asyncio.run(run(args.project, args.path, args.batch))
 
 
 if __name__ == "__main__":
