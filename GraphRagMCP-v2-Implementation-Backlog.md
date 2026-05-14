@@ -8,7 +8,8 @@
 
 ### 0.2 MCP server decomposition
 - Durum: `done`
-- Hedef: büyük `src/mcp_server.py` dosyasını tool registry + service/pipeline modüllerine ayır
+- Çıktı: `src/mcp/server.py` + `src/mcp/tool_registry.py` + `src/mcp/schemas.py`
+  `src/mcp_server.py` entry-point facade olarak korundu.
 
 ## Faz 1 — Knowledge Plane
 
@@ -73,7 +74,13 @@
 
 ### 4.2 Checkpoint/resume
 - Durum: `done`
-- Çıktı: `src/agent/tasks/task_store.py` (PostgreSQL persistence + checkpoints).
+- Çıktı: `src/agent/orchestrator/checkpoints.py` (CheckpointStore + task_checkpoints tablosu)
+  `resume_task` MCP tool eklendi.
+  Her node öncesi/sonrası otomatik checkpoint.
+
+### 4.4 complete_task tool
+- Durum: `done`
+- Çıktı: `complete_task` MCP tool — herhangi bir durumdan DONE'a geçiş; task_steps de güncellenir.
 
 ### 4.3 Approval gates
 - Durum: `done`
@@ -88,6 +95,15 @@
 ### 5.2 Repo profile execution presets
 - Durum: `done`
 - Çıktı: `dotnet`, `python`, `node`, `flutter` profilleri ve `run_verification_plan` tool'u.
+
+### 5.3 Agent pipeline nodes
+- Durum: `done`
+- Çıktı: `src/agent/nodes/` (planner, retriever, explainer, editor, verifier, reviewer, summarizer)
+  BaseNode + NodeResult interface.
+  PlannerNode LLM-tabanlı adım üretimi.
+  EditorNode patch üretir (write-only: Docker mount read-only).
+  VerifierNode build/test çalıştırır.
+  ReviewerNode impact analysis + risk skoru.
 
 ## Faz 6 — Control Plane (Model Gateway & Evals)
 

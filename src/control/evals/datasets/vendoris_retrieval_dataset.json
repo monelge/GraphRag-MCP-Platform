@@ -1,0 +1,5 @@
+[
+  {"query": "auth flow nerede başlıyor", "expected_files": ["AuthService.cs", "TokenHandler.cs"]},
+  {"query": "tenant geçiş mekanizması", "expected_files": ["TenantMiddleware.cs"]},
+  {"query": "kullanıcı doğrulama token yenileme akışı", "expected_files": ["TokenHandler.cs", "AuthService.cs"]}
+]

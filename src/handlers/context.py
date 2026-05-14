@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
 
-from src.agent.orchestrator.state_machine import TaskOrchestrator
+from src.agent.orchestrator.checkpoints import CheckpointStore
 from src.agent.tasks.task_store import TaskStore
 from src.control.evals.dataset_manager import DatasetManager
 from src.control.models.gateway import ModelGateway
@@ -19,10 +20,13 @@ from src.storage.neo4j_store import Neo4jStore
 from src.storage.postgres_store import PostgresStore
 from src.storage.redis_store import RedisStore
 
+if TYPE_CHECKING:
+    from src.agent.orchestrator.state_machine import TaskOrchestrator
+
 
 @dataclass(frozen=True)
 class AppContext:
-    """Handler'ların paylaştığı bağımlılık konteyneri."""
+    """Handler ve node katmanının paylaştığı bağımlılık konteyneri."""
 
     redis: RedisStore
     postgres: PostgresStore
@@ -30,7 +34,7 @@ class AppContext:
     episodic: EpisodicStore
     registry: ProjectRegistry
     task_store: TaskStore
-    orchestrator: TaskOrchestrator
+    orchestrator: "TaskOrchestrator"
     command_runner: CommandRunner
     runtime_manager: SandboxRuntimeManager
     model_gateway: ModelGateway
@@ -40,3 +44,5 @@ class AppContext:
     budget_optimizer: TokenBudgetOptimizer
     impact_analyzer: ImpactAnalyzer
     tracer: type[PipelineTracer]
+    checkpoint_store: Optional[CheckpointStore] = None
+    retrieval_handler: Optional[object] = None
