@@ -101,7 +101,7 @@ class TaskStore:
                     created_at=row["created_at"].timestamp(),
                     updated_at=row["updated_at"].timestamp(),
                 )
-                step_rows = await conn.fetch("SELECT * FROM task_steps WHERE task_id = $1 ORDER BY created_at ASC", task_id)
+                step_rows = await conn.fetch("SELECT * FROM task_steps WHERE task_id = $1 ORDER BY step_id ASC", task_id)
                 for item in step_rows:
                     task.steps.append(
                         TaskStep(
