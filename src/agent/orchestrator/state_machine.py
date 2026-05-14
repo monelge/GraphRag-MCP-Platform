@@ -255,6 +255,14 @@ class TaskOrchestrator:
         task.updated_at = time.time()
         if note:
             task.metadata["completion_note"] = note
+
+        # Tamamlanmamış adımları da done'a çek
+        now = time.time()
+        for step in task.steps:
+            if step.status not in (TaskStatus.DONE, TaskStatus.ABORTED, TaskStatus.FAILED):
+                step.status = TaskStatus.DONE
+                step.completed_at = now
+
         await self.store.save_task(task)
         logger.info("Görev manuel tamamlandı: %s (%s → done)", task_id, previous)
         return f"✅ Görev `{task_id}` tamamlandı (`{previous}` → `done`)."
