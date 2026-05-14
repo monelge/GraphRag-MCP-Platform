@@ -6,17 +6,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 
-logger = logging.getLogger(__name__)
+from src.execution.sandbox.tool_policy import ALLOWED_EXECUTABLES, BLOCKED_BASH_FLAGS
 
-ALLOWED_COMMANDS = {
-    "/usr/bin/python3",
-    "/usr/local/bin/python3",  # macOS Homebrew / Docker base image alternatif yolu
-    "/usr/bin/node",
-    "/usr/local/bin/node",     # macOS Homebrew / Docker base image alternatif yolu
-    "/bin/bash",
-    "/usr/bin/bash",
-}
-_BLOCKED_BASH_FLAGS = {"-c", "-lc"}
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ExecutionResult:
@@ -46,7 +38,7 @@ class CommandRunner:
         if not resolved:
             raise ValueError(f"Command not found: {executable}")
 
-        if resolved not in ALLOWED_COMMANDS:
+        if resolved not in ALLOWED_EXECUTABLES:
             raise ValueError(f"Command not allowed: {resolved}")
 
         return resolved
@@ -69,7 +61,7 @@ class CommandRunner:
                 raise ValueError("Command is empty")
 
             executable = self._resolve_executable(cmd_parts[0])
-            if executable == "/bin/bash" and any(flag in _BLOCKED_BASH_FLAGS for flag in cmd_parts[1:2]):
+            if executable in {"/bin/bash", "/usr/bin/bash"} and any(flag in BLOCKED_BASH_FLAGS for flag in cmd_parts[1:2]):
                 raise ValueError("Inline bash commands are not allowed")
 
             cmd_parts[0] = executable

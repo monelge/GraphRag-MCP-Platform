@@ -105,12 +105,27 @@ CREATE TABLE IF NOT EXISTS model_usage_logs (
 CREATE INDEX IF NOT EXISTS idx_mul_model      ON model_usage_logs(model);
 CREATE INDEX IF NOT EXISTS idx_mul_created_at ON model_usage_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_mul_task_id    ON model_usage_logs(task_id);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    id          BIGSERIAL PRIMARY KEY,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_type  TEXT NOT NULL,
+    collection  TEXT,
+    task_id     TEXT,
+    actor       TEXT DEFAULT 'agent',
+    summary     TEXT,
+    metadata    JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_ae_event_type ON audit_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_ae_task_id ON audit_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_ae_created_at ON audit_events(created_at);
 """
 
 _MIGRATIONS = [
     (1, "Initial retrieval/task schema"),
     (2, "Checkpoint and schema migration tables"),
     (3, "LLM model_usage_logs table"),
+    (4, "Audit events table"),
 ]
 
 
@@ -242,6 +257,34 @@ class PostgresStore:
                     completion_tokens,
                     total_tokens,
                     latency_ms,
+                )
+        except Exception:
+            pass
+
+    async def log_audit_event(
+        self,
+        event_type: str,
+        collection: str = "",
+        task_id: str = "",
+        summary: str = "",
+        metadata: dict | None = None,
+    ) -> None:
+        """Audit olaylarını privacy-safe biçimde audit_events tablosuna yazar."""
+        if not self._pool:
+            return
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO audit_events
+                        (event_type, collection, task_id, summary, metadata)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    event_type,
+                    collection or None,
+                    task_id or None,
+                    summary or None,
+                    metadata or {},
                 )
         except Exception:
             pass
