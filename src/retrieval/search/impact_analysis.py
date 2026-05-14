@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Set
 
+from src.ontology.schema import NodeType
+from src.ontology.summarizers import node_to_summary_text
 from src.storage.neo4j_store import Neo4jStore
 
 logger = logging.getLogger(__name__)

@@ -1,14 +1,36 @@
-"""Ontology node ve edge yazımı için Cypher sorgu üreticileri."""
+"""Ontology node ve edge yazımı için Cypher sorgu üreticileri.
+
+neo4j_store.upsert_nodes_and_relationships() tarafından kullanılır;
+inline sorgu karmaşıklığını azaltır ve tip güvenliği sağlar.
+"""
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 from src.ontology.schema import EdgeType, NodeType
 
 
+def build_upsert_query(
+    source_label: str,
+    target_label: str,
+    rel_type: str,
+) -> str:
+    """
+    İki node arasında MERGE + ilişki sorgusu üretir.
+    neo4j_store'un name+collection primary key modeliyle uyumludur.
+    """
+    return (
+        f"MERGE (s:{source_label} {{name: $s_name, collection: $coll}}) "
+        f"SET s += $s_props "
+        f"MERGE (t:{target_label} {{name: $t_name, collection: $coll}}) "
+        f"SET t += $t_props "
+        f"MERGE (s)-[:{rel_type}]->(t)"
+    )
+
+
 def build_node_query(node_type: NodeType, props: Dict[str, object]) -> Tuple[str, Dict[str, object]]:
-    """Node MERGE sorgusunu ve parametrelerini üretir."""
+    """Tek node MERGE sorgusunu ve parametrelerini üretir (node_id tabanlı)."""
     node_id = str(props.get("node_id") or props.get("id") or props.get("name") or "")
     query = (
         f"MERGE (n:{node_type.value} {{node_id: $node_id}}) "

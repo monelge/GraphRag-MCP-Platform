@@ -9,7 +9,11 @@ Neden migration tablosu var?
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from src.shared.config import config
 from src.shared.utils import sha256_hash
@@ -278,16 +282,16 @@ class PostgresStore:
                     """
                     INSERT INTO audit_events
                         (event_type, collection, task_id, summary, metadata)
-                    VALUES ($1, $2, $3, $4, $5)
+                    VALUES ($1, $2, $3, $4, $5::jsonb)
                     """,
                     event_type,
                     collection or None,
                     task_id or None,
                     summary or None,
-                    metadata or {},
+                    json.dumps(metadata or {}),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("audit_event yazma hatası: %s", exc)
 
     async def get_llm_usage_stats(self, days: int = 7) -> list[dict]:
         """Son N günün model bazlı token özetini döndürür."""

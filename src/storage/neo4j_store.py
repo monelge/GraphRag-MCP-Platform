@@ -2,6 +2,7 @@ import logging
 
 from neo4j import AsyncGraphDatabase
 
+from src.ontology.builders import build_upsert_query
 from src.shared.config import config
 
 logger = logging.getLogger(__name__)
@@ -95,13 +96,7 @@ class Neo4jStore:
                 source_label = _validate_label(source["label"])
                 target_label = _validate_label(target["label"])
                 rel_type = _validate_rel_type(rel["type"])
-                upsert_query = (
-                    f"MERGE (s:{source_label} {{name: $s_name, collection: $coll}}) "
-                    f"SET s += $s_props "
-                    f"MERGE (t:{target_label} {{name: $t_name, collection: $coll}}) "
-                    f"SET t += $t_props "
-                    f"MERGE (s)-[:{rel_type}]->(t)"
-                )
+                upsert_query = build_upsert_query(source_label, target_label, rel_type)
                 s_props = {k: v for k, v in source.items() if k not in ["label", "name"]}
                 s_props["collection"] = coll
                 t_props = {k: v for k, v in target.items() if k not in ["label", "name"]}
