@@ -101,6 +101,86 @@ class ExecutionHandler:
             lines.append(f"- `{task.task_id}` | **{task.title}** | `{task.status.value}` | node=`{task.context.get('current_node')}`")
         return "\n".join(lines)
 
+    async def get_project_state(self, collection: str) -> str:
+        """
+        PostgreSQL'deki tüm task'ları koleksiyona göre gruplandırarak proje durumu özeti döndürür.
+        state.md veya tasks.md dosyalarına bağımlılık olmaksızın kalıcı hafızadan çalışır.
+        """
+        if not collection:
+            return "❌ collection parametresi zorunludur."
+        tasks = await self.ctx.task_store.list_tasks(collection=collection)
+        if not tasks:
+            return f"ℹ️ `{collection}` koleksiyonunda kayıtlı görev bulunamadı."
+
+        by_status: dict[str, list] = {}
+        for task in tasks:
+            key = task.status.value
+            by_status.setdefault(key, []).append(task)
+
+        # Tamamlanan fazlardan faz numarası çıkar (F-001 vb. prefix)
+        done_tasks = by_status.get("done", [])
+        active_tasks = by_status.get("executing", []) + by_status.get("waiting_approval", []) + by_status.get("retrieving", []) + by_status.get("analyzing", [])
+        planned_tasks = by_status.get("planned", [])
+
+        lines = [f"## 🗂️ Proje Durumu — `{collection}`\n"]
+        lines.append(f"**Toplam görev:** {len(tasks)} | **Tamamlanan:** {len(done_tasks)} | **Aktif:** {len(active_tasks)} | **Planlanan:** {len(planned_tasks)}\n")
+
+        if active_tasks:
+            lines.append("### 🔄 Aktif Görevler")
+            for t in active_tasks:
+                pending_steps = [s for s in t.steps if s.status.value == "planned"]
+                lines.append(f"- **{t.title}** `{t.task_id}` | durum: `{t.status.value}` | bekleyen adım: {len(pending_steps)}")
+
+        if planned_tasks:
+            lines.append("\n### 📌 Planlanan Görevler")
+            for t in planned_tasks[:5]:
+                lines.append(f"- **{t.title}** `{t.task_id}`")
+
+        if done_tasks:
+            lines.append(f"\n### ✅ Tamamlanan Görevler ({len(done_tasks)} adet)")
+            for t in done_tasks[:10]:
+                lines.append(f"- {t.title}")
+
+        return "\n".join(lines)
+
+    async def get_active_phase(self, collection: str) -> str:
+        """
+        Koleksiyondaki aktif (executing/waiting_approval) veya en son planned görevi döndürür.
+        Hangi faz üzerinde çalışıldığını PostgreSQL'den doğrudan okur — dosya okumaya gerek yoktur.
+        """
+        if not collection:
+            return "❌ collection parametresi zorunludur."
+        tasks = await self.ctx.task_store.list_tasks(collection=collection)
+        if not tasks:
+            return f"ℹ️ `{collection}` koleksiyonunda kayıtlı görev bulunamadı."
+
+        # Öncelik: executing > waiting_approval > planned (en son güncellenen)
+        priority_order = ["executing", "waiting_approval", "retrieving", "analyzing", "verifying", "planned"]
+        active: Task | None = None
+        for status_val in priority_order:
+            candidates = [t for t in tasks if t.status.value == status_val]
+            if candidates:
+                active = candidates[0]
+                break
+
+        if not active:
+            return "ℹ️ Aktif veya planlanan görev bulunamadı."
+
+        lines = [
+            f"## 🎯 Aktif Faz — `{collection}`\n",
+            f"**Görev:** {active.title}",
+            f"**ID:** `{active.task_id}`",
+            f"**Durum:** `{active.status.value}`",
+            f"**Açıklama:** {active.description[:300]}",
+        ]
+        if active.steps:
+            done_count = sum(1 for s in active.steps if s.status.value == "done")
+            lines.append(f"\n### Adımlar ({done_count}/{len(active.steps)} tamamlandı):")
+            for i, step in enumerate(active.steps, 1):
+                icon = "✅" if step.status.value == "done" else "⏳" if step.status.value in ("executing", "retrieving") else "📌"
+                lines.append(f"{i}. {icon} {step.description} — `{step.status.value}`")
+        return "\n".join(lines)
+
     async def run_verification_plan(self, project_path: str, run_build: bool = True, run_tests: bool = True, run_lint: bool = False) -> str:
         profile = self.ctx.runtime_manager.detect_profile(project_path)
         profile_name = profile.name if profile and profile.name else "UNKNOWN"

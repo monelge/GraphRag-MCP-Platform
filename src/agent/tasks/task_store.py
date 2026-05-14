@@ -119,23 +119,62 @@ class TaskStore:
             return None
 
     async def list_tasks(self, collection: Optional[str] = None, status: Optional[TaskStatus] = None) -> List[Task]:
+        """
+        Tüm task ve step'leri tek JOIN sorgusuyla PostgreSQL'den çeker.
+        N+1 sorgu probleminden kaçınmak için tasks + task_steps birleştirilir.
+        """
         if not self.pg.available:
             return []
         clauses = []
         params = []
         if collection:
-            clauses.append(f"collection = ${len(params) + 1}")
+            clauses.append(f"t.collection = ${len(params) + 1}")
             params.append(collection)
         if status:
-            clauses.append(f"status = ${len(params) + 1}")
+            clauses.append(f"t.status = ${len(params) + 1}")
             params.append(status.value)
         where = " AND ".join(clauses) if clauses else "1=1"
-        query = f"SELECT task_id FROM tasks WHERE {where} ORDER BY updated_at DESC"
+        query = f"""
+            SELECT
+                t.task_id, t.title, t.description, t.status, t.collection,
+                t.context, t.metadata, t.created_at, t.updated_at,
+                s.step_id, s.description AS step_desc, s.status AS step_status,
+                s.result, s.started_at, s.completed_at
+            FROM tasks t
+            LEFT JOIN task_steps s ON s.task_id = t.task_id
+            WHERE {where}
+            ORDER BY t.updated_at DESC, s.step_id ASC
+        """
         async with self.pg._pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
-        tasks = []
+
+        # Satırları task_id'ye göre grupla — tek geçişte nesne oluştur
+        tasks_map: dict[str, Task] = {}
         for row in rows:
-            task = await self.get_task(row["task_id"])
-            if task:
-                tasks.append(task)
-        return tasks
+            tid = row["task_id"]
+            if tid not in tasks_map:
+                ctx = row["context"] if isinstance(row["context"], dict) else json.loads(row["context"] or "{}")
+                meta = row["metadata"] if isinstance(row["metadata"], dict) else json.loads(row["metadata"] or "{}")
+                tasks_map[tid] = Task(
+                    task_id=tid,
+                    title=row["title"],
+                    description=row["description"],
+                    status=TaskStatus(row["status"]),
+                    collection=row["collection"],
+                    context=ctx,
+                    metadata=meta,
+                    created_at=row["created_at"].timestamp(),
+                    updated_at=row["updated_at"].timestamp(),
+                )
+            if row["step_id"]:
+                tasks_map[tid].steps.append(
+                    TaskStep(
+                        step_id=row["step_id"],
+                        description=row["step_desc"],
+                        status=TaskStatus(row["step_status"]),
+                        result=row["result"],
+                        started_at=row["started_at"],
+                        completed_at=row["completed_at"],
+                    )
+                )
+        return list(tasks_map.values())

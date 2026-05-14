@@ -117,6 +117,16 @@ async def list_agent_tasks(collection: str = "", status: str = "") -> str:
     return await _execution.list_agent_tasks(collection, status)
 
 
+async def get_project_state(collection: str) -> str:
+    """PostgreSQL'den koleksiyonun tüm görev durumunu döndürür. state.md/tasks.md dosyası gerekmez."""
+    return await _execution.get_project_state(collection)
+
+
+async def get_active_phase(collection: str) -> str:
+    """PostgreSQL'den aktif/planlanan fazı adımlarıyla döndürür."""
+    return await _execution.get_active_phase(collection)
+
+
 async def run_verification_plan(project_path: str, run_build: bool = True, run_tests: bool = True, run_lint: bool = False) -> str:
     return await _execution.run_verification_plan(project_path, run_build, run_tests, run_lint)
 
@@ -173,6 +183,8 @@ TOOL_FUNCTIONS = [
     complete_task,
     resume_task,
     list_agent_tasks,
+    get_project_state,
+    get_active_phase,
     run_verification_plan,
     run_retrieval_eval,
     get_control_plane_stats,
