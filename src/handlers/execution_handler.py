@@ -49,13 +49,13 @@ class ExecutionHandler:
     async def approve_task_step(self, task_id: str, feedback: str = "approved") -> str:
         result = await self.ctx.orchestrator.approve_task(task_id, feedback)
         if self.ctx.audit_logger:
-            self.ctx.audit_logger.log("approval_decision", task_id=task_id, summary=feedback)
+            await self.ctx.audit_logger.log("approval_decision", task_id=task_id, summary=feedback)
         return result
 
     async def complete_task(self, task_id: str, note: str = "") -> str:
         result = await self.ctx.orchestrator.complete_task(task_id, note)
         if self.ctx.audit_logger:
-            self.ctx.audit_logger.log("approval_decision", task_id=task_id, summary=note)
+            await self.ctx.audit_logger.log("approval_decision", task_id=task_id, summary=note)
         return result
 
     async def resume_task(self, task_id: str) -> str:

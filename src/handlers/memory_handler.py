@@ -35,7 +35,7 @@ class MemoryHandler:
             status=status,
         )
         if self.ctx.audit_logger:
-            self.ctx.audit_logger.log("memory_write", collection=collection, summary=title)
+            await self.ctx.audit_logger.log("memory_write", collection=collection, summary=title)
         if memory_type == "semantic":
             return await self.semantic_store.store_semantic(entry, redis_store=self.ctx.redis)
         return await self.memory_writer.write(entry, redis_store=self.ctx.redis)

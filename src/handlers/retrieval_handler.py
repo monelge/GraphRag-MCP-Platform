@@ -207,7 +207,7 @@ class RetrievalHandler:
             header += f"\n> ⚠️ {assessment.reason}"
 
         if self.ctx.audit_logger:
-            self.ctx.audit_logger.log(
+            await self.ctx.audit_logger.log(
                 "retrieval_request",
                 collection=collection,
                 summary=f"query_type={query_type} top_k={top_k} hits={len(final_chunks)}",
