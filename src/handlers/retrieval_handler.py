@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json as _json
+import logging
 import os
 import time
+
+logger = logging.getLogger(__name__)
 
 from src.control.models.guardrail import GuardrailError, RequestBudget, fail_fast_token
 from src.control.models.model_router import get_model
@@ -52,6 +55,7 @@ class RetrievalHandler:
 
         cached = await self.ctx.redis.get_retrieval(collection, query)
         if cached is not None:
+            logger.info("retrieval cache hit, pool=%s", bool(self.ctx.postgres._pool))
             await self.ctx.postgres.log_retrieval(
                 collection=collection,
                 redacted_query=query[:80],
@@ -121,7 +125,7 @@ class RetrievalHandler:
                 )
             elif expansions:
                 seen: dict[str, dict] = {}
-                for current_query in [query, *expansions]:
+                for current_query in [query] + (expansions or []):
                     batch = await searcher.search(current_query, collection=collection, top_k=top_k)
                     for chunk in batch:
                         key = f"{chunk.get('file', '')}:{chunk.get('name', '')}:{chunk.get('lines', '')}"
@@ -156,7 +160,7 @@ class RetrievalHandler:
 
         rerank_started = time.monotonic()
         with tracer.step("rerank"):
-            reranked = self.ctx.reranker.rerank(query, candidates, top_n=min(top_k, 5))
+            reranked = self.ctx.reranker.rerank(query, candidates, top_n=top_k)
             tracer.record("rerank", item_count=len(reranked))
         rerank_ms = int((time.monotonic() - rerank_started) * 1000)
 
@@ -175,10 +179,12 @@ class RetrievalHandler:
         assessment = assess_answerability(deduped, query_type=query_type)
         if assessment.confidence == Confidence.INSUFFICIENT:
             tracer.finish()
+            logger.info("retrieval_log yazılıyor (INSUFFICIENT), pool=%s", bool(self.ctx.postgres._pool))
             await self.ctx.postgres.log_retrieval(
                 collection=collection,
                 redacted_query=query[:80],
                 query_type=query_type,
+                top_k=top_k,
                 top1_score=assessment.top1_score,
                 latency_ms=int((time.monotonic() - t0) * 1000),
                 rerank_latency_ms=rerank_ms,
@@ -234,6 +240,7 @@ class RetrievalHandler:
 
         await self.ctx.redis.set_retrieval(collection, query, result_text)
         latency_ms = int((time.monotonic() - t0) * 1000)
+        logger.info("retrieval_log yazılıyor (normal), pool=%s", bool(self.ctx.postgres._pool))
         await self.ctx.postgres.log_retrieval(
             collection=collection,
             redacted_query=query[:80],
@@ -251,6 +258,7 @@ class RetrievalHandler:
 
     async def explain_code(self, query: str, collection: str = "", top_k: int = 5) -> str:
         """Kod bloklarını hibrit arama + LLM analizi ile açıklar."""
+        t0 = time.monotonic()
         collection = collection or os.getenv("DEFAULT_COLLECTION", "codebase")
         query_type = classify_query(query)
 
@@ -276,6 +284,16 @@ class RetrievalHandler:
 
         assessment = assess_answerability(deduped)
         if assessment.confidence == Confidence.INSUFFICIENT:
+            if self.ctx.postgres:
+                await self.ctx.postgres.log_retrieval(
+                    collection=collection,
+                    redacted_query=query[:80],
+                    query_type=query_type,
+                    top_k=top_k,
+                    top1_score=assessment.top1_score,
+                    latency_ms=int((time.monotonic() - t0) * 1000),
+                    answerability_fail=True,
+                )
             return f"⚠️ Retrieval yetersiz: {assessment.reason}"
 
         budget_chars = get_budget_chars(query_type)
@@ -351,9 +369,22 @@ class RetrievalHandler:
                     f"### `{chunk['name']}` ({chunk['type']}) — {chunk['file']} satır {chunk['lines']}\n"
                     f"```{chunk['language']}\n{chunk['code'][:800]}\n```\n"
                 )
-            return "\n".join(output_lines)
+            result = "\n".join(output_lines)
         except Exception:
-            return f"## Kod Analizi: '{query}'\n\n{raw}"
+            result = f"## Kod Analizi: '{query}'\n\n{raw}"
+
+        if self.ctx.postgres:
+            await self.ctx.postgres.log_retrieval(
+                collection=collection,
+                redacted_query=query[:80],
+                query_type=query_type,
+                top_k=top_k,
+                hit_count=len(final_chunks),
+                top1_score=assessment.top1_score,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                cache_hit=False,
+            )
+        return result
 
     async def search_repo_architecture(
         self,

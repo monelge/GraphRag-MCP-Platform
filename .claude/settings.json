@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__graph-mcp__search_code",
+      "mcp__graph-mcp__explain_code",
+      "mcp__graph-mcp__search_agent_docs",
+      "mcp__graph-mcp__search_repo_architecture",
+      "mcp__graph-mcp__search_decisions",
+      "mcp__graph-mcp__recall_memory",
+      "mcp__graph-mcp__get_project_state",
+      "mcp__graph-mcp__get_active_phase",
+      "mcp__graph-mcp__list_agent_tasks",
+      "mcp__graph-mcp__list_projects",
+      "mcp__graph-mcp__get_control_plane_stats",
+      "mcp__graph-mcp__get_task_status"
+    ]
+  }
+}

@@ -75,11 +75,14 @@ _metrics = get_metrics()
 _budget_manager = BudgetManager()
 _model_gateway.set_postgres(_postgres)
 _model_gateway.set_budget_manager(_budget_manager)
+# _audit._pg lifespan beklemeden hemen bağlanır; pool yokken log_audit_event zaten erken döner.
+_audit.set_postgres(_postgres)
 _dataset_manager = DatasetManager()
 _reranker = LocalReranker()
 _deduplicator = SemanticDeduplicator()
 _budget_opt = TokenBudgetOptimizer()
 _impact_analyzer = ImpactAnalyzer(_neo4j)
+# PipelineTracer sınıfı (instance deil); retrieval_handler.py içinde ctx.tracer(query=..., ...) ile yeni instance üretilir
 _tracer = PipelineTracer
 
 _app_ctx = AppContext(
@@ -121,7 +124,6 @@ _orchestrator.app_context = _app_ctx
 @asynccontextmanager
 async def _lifespan(server):
     logger.info("MCP server başlatılıyor", extra={"server": "graph-mcp"})
-    _audit.set_postgres(_postgres)
     await _postgres.connect()
     await _neo4j.connect()
     try:
