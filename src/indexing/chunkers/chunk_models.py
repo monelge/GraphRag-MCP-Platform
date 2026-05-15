@@ -37,7 +37,15 @@ class CodeChunk:
     bases: list[str] = field(default_factory=list)    # Kalıtım/Arayüz (Phase 2)
     config_keys: list[str] = field(default_factory=list) # Kullanılan config/env (Phase 2)
     semantic_meta: Optional[SemanticMeta] = None  # LLM ile doldurulur (opsiyonel)
-    
+
+    # Faz 2: Zengin ontology node tipleri için AST tabanlı detection
+    endpoints: list[str] = field(default_factory=list)         # @route("/api/users") -> ["/api/users"]
+    is_dto: bool = False                                       # Class isim deseni: *Dto, *Model, *ViewModel
+    is_migration: bool = False                                 # Dosya yolu: migrations/ veya *Migration*
+    is_ui_component: bool = False                              # .tsx/.jsx + component isim deseni
+    is_business_rule: bool = False                             # isim: *Rule, *Policy, *Validator
+    is_entity: bool = False                                    # isim: *Entity veya Entities/ klasörü
+
     # Faz 2: Provenance & Metadata
     project: str = "default"
     commit_sha: Optional[str] = None
@@ -61,6 +69,12 @@ class CodeChunk:
             "calls": self.calls,
             "bases": self.bases,
             "config_keys": self.config_keys,
+            "endpoints": self.endpoints,
+            "is_dto": self.is_dto,
+            "is_migration": self.is_migration,
+            "is_ui_component": self.is_ui_component,
+            "is_business_rule": self.is_business_rule,
+            "is_entity": self.is_entity,
             "project": self.project,
             "commit_sha": self.commit_sha,
             "branch": self.branch,

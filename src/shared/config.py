@@ -37,10 +37,23 @@ class AppConfig:
     reasoning_model: str
 
 
+def _build_postgres_dsn() -> str:
+    """Bireysel POSTGRES_* değişkenlerinden DSN oluşturur; POSTGRES_DSN varsa onu kullanır."""
+    dsn = os.getenv("POSTGRES_DSN")
+    if dsn:
+        return dsn
+    user = os.getenv("POSTGRES_USER", "graphmcp")
+    password = os.getenv("POSTGRES_PASSWORD", "graphmcp")
+    host = os.getenv("POSTGRES_HOST", "postgres")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    db = os.getenv("POSTGRES_DB", "graphmcp")
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+
 def load_config() -> AppConfig:
     """Ortam değişkenlerinden AppConfig yükler."""
     return AppConfig(
-        postgres_dsn=os.getenv("POSTGRES_DSN", "postgresql://graphmcp:graphmcp@postgres:5432/graphmcp"),
+        postgres_dsn=_build_postgres_dsn(),
         neo4j_uri=os.getenv("NEO4J_URI", "bolt://neo4j:7687"),
         neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
         neo4j_password=os.getenv("NEO4J_PASSWORD", "graphmcp"),

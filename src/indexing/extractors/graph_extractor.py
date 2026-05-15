@@ -85,4 +85,59 @@ class GraphExtractor:
                     "type": "USES_CONFIG"
                 })
 
+            # 7. Endpoint: Chunk -> Endpoint
+            for ep in chunk.endpoints:
+                relations.append({
+                    "source": chunk_node,
+                    "target": {"label": "Endpoint", "name": ep, "path": chunk.file_path},
+                    "type": "EXPOSES_ENDPOINT"
+                })
+
+            # 8. DTO node
+            if chunk.is_dto:
+                relations.append({
+                    "source": chunk_node,
+                    "target": {"label": "DTO", "name": chunk.name, "path": chunk.file_path},
+                    "type": "OWNS"
+                })
+
+            # 9. Migration node
+            if chunk.is_migration:
+                relations.append({
+                    "source": chunk_node,
+                    "target": {"label": "Migration", "name": chunk.name or Path(chunk.file_path).name, "path": chunk.file_path},
+                    "type": "OWNS"
+                })
+
+            # 10. UIComponent node
+            if chunk.is_ui_component:
+                relations.append({
+                    "source": chunk_node,
+                    "target": {"label": "UIComponent", "name": chunk.name, "path": chunk.file_path},
+                    "type": "OWNS"
+                })
+
+            # 11. BusinessRule node
+            if chunk.is_business_rule:
+                relations.append({
+                    "source": chunk_node,
+                    "target": {"label": "BusinessRule", "name": chunk.name, "path": chunk.file_path},
+                    "type": "RELATES_TO_RULE"
+                })
+
+            # 12. Entity node + MUTATES/READS edge inference
+            if chunk.is_entity:
+                entity_node = {"label": "Entity", "name": chunk.name, "path": chunk.file_path}
+                relations.append({
+                    "source": chunk_node,
+                    "target": entity_node,
+                    "type": "OWNS"
+                })
+                # Write vs Read inference from method names
+                lower_name = (chunk.name or "").lower()
+                if any(kw in lower_name for kw in ("create", "insert", "update", "delete", "save", "remove", "mutate", "modify", "set", "add", "put", "patch")):
+                    relations.append({"source": chunk_node, "target": entity_node, "type": "MUTATES_ENTITY"})
+                elif any(kw in lower_name for kw in ("get", "find", "list", "search", "read", "fetch", "query", "select", "retrieve", "load")):
+                    relations.append({"source": chunk_node, "target": entity_node, "type": "READS_ENTITY"})
+
         return relations

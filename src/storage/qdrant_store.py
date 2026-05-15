@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import os
 import uuid
 from qdrant_client import AsyncQdrantClient
@@ -11,6 +12,8 @@ from qdrant_client.models import (
 )
 from src.indexing.chunkers.chunk_models import CodeChunk, AgentDocChunk
 
+logger = logging.getLogger(__name__)
+
 DIM = int(os.getenv("EMBEDDING_DIM", "1536"))
 
 
@@ -18,10 +21,17 @@ class QdrantStore:
     def __init__(self, collection: str = "codebase"):
         # Her proje kendi koleksiyonuna sahip olur; ad proje dizin adından gelir.
         self.collection = collection
-        self.client = AsyncQdrantClient(
-            url=os.getenv("QDRANT_URL", "http://localhost:6333"),
-            api_key=os.getenv("QDRANT_API_KEY") or None,
-        )
+        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+        api_key = os.getenv("QDRANT_API_KEY") or None
+        logger.debug("Initializing QdrantStore collection=%s url=%s", collection, qdrant_url)
+        try:
+            self.client = AsyncQdrantClient(
+                url=qdrant_url,
+                api_key=api_key,
+            )
+        except Exception as exc:
+            logger.error("Qdrant AsyncQdrantClient initialization failed: %s", exc)
+            raise
 
     async def ensure_collection(self):
         """
@@ -33,6 +43,7 @@ class QdrantStore:
         existing = await self.client.get_collections()
         names = [c.name for c in existing.collections]
         if self.collection not in names:
+            logger.info("Qdrant collection yok, oluşturuluyor: %s", self.collection)
             await self.client.create_collection(
                 collection_name=self.collection,
                 vectors_config={
@@ -52,6 +63,9 @@ class QdrantStore:
                     field_name=field_name,
                     field_schema=PayloadSchemaType.KEYWORD,
                 )
+            logger.info("Qdrant collection oluşturuldu: %s", self.collection)
+        else:
+            logger.debug("Qdrant collection zaten mevcut: %s", self.collection)
 
     async def get_indexed_file_paths(self) -> set[str]:
         """
@@ -257,6 +271,37 @@ class QdrantStore:
             collection_name=self.collection,
             points_selector=PointIdsList(points=point_ids),
         )
+
+    async def delete_by_filter(self, filter_obj: Filter) -> int:
+        """
+        Bir filter'e uyan tüm noktaları fiziksel olarak siler.
+        Memory expiry pruning ve tombstone purge için kullanılır.
+        """
+        # Önce scroll ile point_id'leri topla (AsyncQdrantClient'ta Filter points_selector
+        # doğrudan desteklenmeyebilir — güvenli yol scroll + batch delete)
+        point_ids: list[str] = []
+        offset = None
+        while True:
+            points, next_offset = await self.client.scroll(
+                collection_name=self.collection,
+                scroll_filter=filter_obj,
+                limit=1000,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            for p in points:
+                point_ids.append(str(p.id))
+            if next_offset is None or not points:
+                break
+            offset = next_offset
+
+        if point_ids:
+            await self.client.delete(
+                collection_name=self.collection,
+                points_selector=PointIdsList(points=point_ids),
+            )
+        return len(point_ids)
 
     async def tombstone_chunks_by_path(self, relative_path: str) -> None:
         """

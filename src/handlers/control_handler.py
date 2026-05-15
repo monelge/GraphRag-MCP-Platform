@@ -81,7 +81,7 @@ class ControlHandler:
         return format_profile(profile)
 
     async def get_control_plane_stats(self) -> str:
-        """Model gateway istatistiklerini ve DB'den LLM token özetini döndürür."""
+        """Model gateway istatistiklerini ve DB'den kalıcı LLM/retrieval/audit özetini döndürür."""
         stats = self.ctx.model_gateway.get_stats()
         lines = [
             "## 🕹️ Control Plane — Model Gateway Stats",
@@ -94,7 +94,9 @@ class ControlHandler:
             lines.append(
                 f"- **{model}:** {model_stats['calls']} çağrı | {model_stats['tokens']} token | {model_stats['avg_latency']:.0f}ms avg"
             )
-        # DB'den son 7 günün kalıcı istatistikleri
+
+        # ── Kalıcı DB istatistikleri ──────────────────────────────────────────
+        # LLM token kullanımı
         db_rows = await self.ctx.postgres.get_llm_usage_stats(days=7)
         if db_rows:
             lines.append("\n### 📊 DB — Son 7 Gün LLM Token Kullanımı:")
@@ -104,6 +106,38 @@ class ControlHandler:
                     f"prompt={row['prompt_tokens']} | completion={row['completion_tokens']} | "
                     f"toplam={row['total_tokens']} | avg={row['avg_latency_ms']}ms"
                 )
+
+        # Retrieval istatistikleri
+        retrieval_rows = await self.ctx.postgres.get_retrieval_stats(days=7)
+        if retrieval_rows:
+            lines.append("\n### 🔍 DB — Son 7 Gün Retrieval İstatistikleri:")
+            for row in retrieval_rows:
+                cache_pct = int(row["cache_hits"] / row["calls"] * 100) if row["calls"] else 0
+                fail_pct = int(row["answerability_fails"] / row["calls"] * 100) if row["calls"] else 0
+                lines.append(
+                    f"- **{row['collection']}** `{row['query_type'] or '-'}`: "
+                    f"{row['calls']} sorgu | "
+                    f"cache={row['cache_hits']} (%{cache_pct}) | "
+                    f"yetersiz={row['answerability_fails']} (%{fail_pct}) | "
+                    f"avg_latency={row['avg_latency_ms']}ms | "
+                    f"avg_hit={row['avg_hit_count']:.1f} | "
+                    f"avg_score={row['avg_top1_score']:.3f}"
+                )
+
+        # Audit event özeti
+        audit_data = await self.ctx.postgres.get_audit_stats(days=7)
+        if audit_data.get("summary"):
+            lines.append("\n### 🛡️ DB — Son 7 Gün Audit Olayları:")
+            for row in audit_data["summary"]:
+                lines.append(f"- **{row['event_type']}:** {row['count']} olay | son: {row['last_seen']}")
+        if audit_data.get("recent"):
+            lines.append("\n#### Son 5 Audit Kaydı:")
+            for row in audit_data["recent"]:
+                lines.append(
+                    f"  - `{row['event_type']}` | {row['collection'] or '-'} | "
+                    f"{(row['summary'] or '')[:60]} | {row['created_at']}"
+                )
+
         return "\n".join(lines)
 
     async def analyze_change_impact(

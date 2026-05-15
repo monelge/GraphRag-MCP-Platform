@@ -98,6 +98,14 @@ class ASTChunker:
                 bases = self._extract_bases(node, source, language) if chunk_type == "class" else []
                 config_keys = self._extract_config_usage(node, source, language)
 
+                # Zengin ontology detection
+                endpoints = self._extract_endpoints(node, source, language, name)
+                is_dto = self._detect_dto(name, code, file_path)
+                is_migration = self._detect_migration(file_path, name)
+                is_ui_component = self._detect_ui_component(name, code, file_path, language)
+                is_business_rule = self._detect_business_rule(name, code, file_path)
+                is_entity = self._detect_entity(name, code, file_path)
+
                 chunks.append(CodeChunk(
                     chunk_id=hashlib.sha256(
                         f"{file_path}:{node.start_point}".encode()
@@ -114,6 +122,12 @@ class ASTChunker:
                     calls=calls,
                     bases=bases,
                     config_keys=config_keys,
+                    endpoints=endpoints,
+                    is_dto=is_dto,
+                    is_migration=is_migration,
+                    is_ui_component=is_ui_component,
+                    is_business_rule=is_business_rule,
+                    is_entity=is_entity,
                 ))
 
                 new_parent = name if chunk_type == "class" else parent_class
@@ -220,12 +234,96 @@ class ASTChunker:
             "typescript": [r"process\.env\.( [a-zA-Z0-9_]+)", r"process\.env\[[\"'](.*?)[\"']\]"],
             "csharp": [r"Configuration\[[\"'](.*?)[\"']\]", r"Environment\.GetEnvironmentVariable\([\"'](.*?)[\"']\)"]
         }
-        
+
         for pattern in patterns.get(language, []):
             matches = re.findall(pattern, code_text)
             configs.extend(matches)
-            
+
         return list(set(configs))
+
+    # ── Zengin Ontology Detection Metodları ───────────────────────────────
+
+    def _extract_endpoints(self, node, source: bytes, language: str, func_name: str | None) -> list[str]:
+        """Decorator / attribute tabanlı HTTP route endpoint'lerini çıkarır."""
+        import re
+        endpoints = []
+        code_text = source[node.start_byte:node.end_byte].decode(errors="replace")
+
+        # Python: @app.route("/path"), @api_view(["GET"]), @action(detail=True)
+        if language == "python":
+            for match in re.finditer(r'@[\w.]+\(\s*["\']([^"\']+)["\']', code_text):
+                val = match.group(1)
+                if val.startswith(("/", "http", "api")):
+                    endpoints.append(val)
+            for match in re.finditer(r'@(?:api_view|require_http_methods)\(\s*\[?\s*["\']([A-Z]+)["\']', code_text):
+                endpoints.append(f"[{match.group(1)}] {func_name or ''}")
+
+        # TypeScript / C#: @Get(), @Post(), [HttpGet("path")], [Route("path")]
+        elif language in ("typescript", "csharp"):
+            for match in re.finditer(r'[@\[](?:Get|Post|Put|Delete|Patch|HttpGet|HttpPost|HttpPut|HttpDelete|HttpPatch|Route)\s*\(\s*["\']?([^"\']*)["\']?\s*\)', code_text):
+                val = match.group(1)
+                endpoints.append(val if val else f"[{func_name or 'unnamed'}]")
+
+        return list(set(endpoints))
+
+    def _detect_dto(self, name: str | None, code: str, file_path: str) -> bool:
+        """Class isim desenine göre DTO/Data Model tanımlarını tespit eder."""
+        suffixes = ("Dto", "DTO", "Model", "ViewModel", "Request", "Response", "Payload")
+        if name and name.endswith(suffixes):
+            return True
+        # Dosya yolu ipucu (leading slash olmadan da çalışır)
+        lower_path = file_path.lower()
+        if any(seg in lower_path for seg in ("dtos/", "dto/", "models/", "viewmodels/")):
+            return True
+        return False
+
+    def _detect_migration(self, file_path: str, name: str | None) -> bool:
+        """Dosya yolu veya isim desenine göre migration tespiti."""
+        lower_path = file_path.lower()
+        if any(seg in lower_path for seg in ("migrations/", "migrate/", "migration/")):
+            return True
+        if name and "migration" in name.lower():
+            return True
+        return False
+
+    def _detect_ui_component(self, name: str | None, code: str, file_path: str, language: str) -> bool:
+        """.tsx/.jsx ve PascalCase component isim desenini tespit eder."""
+        if not name:
+            return False
+        ext = Path(file_path).suffix.lower()
+        if ext not in (".tsx", ".jsx", ".vue"):
+            return False
+        # PascalCase + JSX return pattern
+        if name[0].isupper() and ("return " in code or "<>" in code or "React" in code):
+            return True
+        return False
+
+    def _detect_business_rule(self, name: str | None, code: str, file_path: str) -> bool:
+        """İsim ve dosya yoluna göre business rule / policy / validator tespiti."""
+        if not name:
+            return False
+        keywords = ("rule", "policy", "validator", "validation", "constraint", "assertion")
+        if any(kw in name.lower() for kw in keywords):
+            return True
+        lower_path = file_path.lower()
+        if any(seg in lower_path for seg in ("/rules/", "/policies/", "/validators/", "/validations/")):
+            return True
+        return False
+
+    def _detect_entity(self, name: str | None, code: str, file_path: str) -> bool:
+        """Domain entity tanımlarını tespit eder."""
+        if not name:
+            return False
+        if name.endswith("Entity"):
+            return True
+        lower_path = file_path.lower()
+        if any(seg in lower_path for seg in ("/entities/", "/domain/")):
+            return True
+        # Base class check
+        import re
+        if re.search(r'class\s+\w+\s*\([^)]*Entity[^)]*\)', code):
+            return True
+        return False
 
     def _detect_language(self, path: Path) -> str:
         return EXT_TO_LANG.get(path.suffix, "unknown")

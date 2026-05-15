@@ -145,6 +145,15 @@ class RetrievalHandler:
             tracer.record("retrieval", item_count=len(candidates))
 
         if not candidates:
+            await self.ctx.postgres.log_retrieval(
+                collection=collection,
+                redacted_query=query[:80],
+                query_type=query_type,
+                top_k=top_k,
+                hit_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                answerability_fail=True,
+            )
             return "🔍 Sorguya uygun kod bloğu bulunamadı."
 
         expander = GraphExpander(self.ctx.neo4j)
@@ -270,6 +279,15 @@ class RetrievalHandler:
             query_filter=CODE_ONLY_FILTER,
         )
         if not candidates:
+            await self.ctx.postgres.log_retrieval(
+                collection=collection,
+                redacted_query=query[:80],
+                query_type=query_type,
+                top_k=top_k,
+                hit_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                answerability_fail=True,
+            )
             return "🔍 Sorguya uygun kod bloğu bulunamadı."
 
         reranked = self.ctx.reranker.rerank(query, candidates, top_n=top_k)
@@ -393,6 +411,7 @@ class RetrievalHandler:
         top_k: int = 6,
     ) -> str:
         """Repo summary chunk'ları üzerinden mimari arama yapar."""
+        t0 = time.monotonic()
         collection = collection or os.getenv("DEFAULT_COLLECTION", "codebase")
         architecture_filter = QFilter(
             must=[QFC(key="source_type", match=QMV(value="repo_summary"))]
@@ -406,6 +425,15 @@ class RetrievalHandler:
         )
 
         if not results:
+            await self.ctx.postgres.log_retrieval(
+                collection=collection,
+                redacted_query=query[:80],
+                query_type="architecture",
+                top_k=top_k,
+                hit_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                answerability_fail=True,
+            )
             return (
                 "🔍 Repository architecture summary bulunamadı. "
                 "Önce summarize_repository veya index_project çalıştırın."
@@ -417,4 +445,16 @@ class RetrievalHandler:
                 f"### `{item.get('name', '')}` ({item.get('type', '')}) — skor: {item.get('score', 0):.3f}\n"
                 f"{item.get('code', '')[:1200]}\n"
             )
-        return "\n".join(output)
+        
+        result_text = "\n".join(output)
+        await self.ctx.postgres.log_retrieval(
+            collection=collection,
+            redacted_query=query[:80],
+            query_type="architecture",
+            top_k=top_k,
+            hit_count=len(results),
+            top1_score=results[0].get("score", 0.0) if results else 0.0,
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            cache_hit=False,
+        )
+        return result_text

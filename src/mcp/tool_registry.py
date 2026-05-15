@@ -22,6 +22,11 @@ def _tool(func):
     @ _app.tool()
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
+        # STDIO transport'ta lifespan tetiklenemeyebilir; lazy connect ile güvence altına al.
+        if _ctx and _ctx.postgres and not _ctx.postgres.available:
+            await _ctx.postgres.connect()
+            if _ctx.audit_logger:
+                _ctx.audit_logger.set_postgres(_ctx.postgres)
         started = _time.monotonic()
         log_ctx = {"tool": func.__name__}
         for key in ("collection", "query", "task_id", "project_path", "title"):

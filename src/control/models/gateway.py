@@ -82,10 +82,9 @@ class ModelGateway:
                 completion_tokens = usage.completion_tokens if usage else 0
                 total_tokens      = usage.total_tokens      if usage else 0
                 self._update_stats(model, latency, total_tokens)
-                # DB'ye async yaz — hata olursa sessizce geç
                 if self._pg:
-                    asyncio.ensure_future(
-                        self._pg.log_llm_usage(
+                    try:
+                        await self._pg.log_llm_usage(
                             model=model,
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
@@ -94,7 +93,8 @@ class ModelGateway:
                             task_id=task_id,
                             node_name=node_name,
                         )
-                    )
+                    except Exception:
+                        logger.debug("log_llm_usage yazma hatası", exc_info=True)
                 return response
             except Exception as exc:
                 last_error = exc

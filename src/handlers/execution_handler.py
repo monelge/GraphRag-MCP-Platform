@@ -23,6 +23,11 @@ class ExecutionHandler:
 
     async def create_agent_task(self, title: str, description: str, collection: str, steps=None) -> str:
         task = await self.ctx.orchestrator.create_task(title, description, collection, steps)
+        # Pipeline'ı otomatik başlat
+        try:
+            await self.ctx.orchestrator.run_step(task.task_id)
+        except Exception as exc:
+            return f"🚀 Görev başlatıldı! Task ID: `{task.task_id}`\nDurum: `{task.status.value}`\n⚠️ Pipeline başlatılırken hata: {exc}"
         lines = [f"🚀 Görev başlatıldı! Task ID: `{task.task_id}`", f"Durum: `{task.status.value}`"]
         if task.steps:
             lines.append(f"\n### Adımlar ({len(task.steps)}):")

@@ -508,6 +508,15 @@ class IndexingHandler:
         searcher = HybridSearcher(collection=collection)
         results = await searcher.search(query, top_k=8, query_filter=active_filter)
         if not results:
+            await self.ctx.postgres.log_retrieval(
+                collection=collection,
+                redacted_query=query[:80],
+                top1_score=0.0,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                hit_count=0,
+                query_type="agent_doc",
+                answerability_fail=True,
+            )
             filter_info = ""
             if layer or doc_priority:
                 filter_info = f" (filtre: layer={layer or '*'}, priority={doc_priority or '*'})"

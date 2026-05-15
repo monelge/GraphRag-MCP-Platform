@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,9 @@ class PostgresStore:
 
     async def connect(self) -> None:
         if not _PG_AVAILABLE:
+            logger.warning(
+                "asyncpg paketi yüklenmedi, PostgreSQL desteği devre dışı kalacak. 'asyncpg' gereksinimini kontrol edin."
+            )
             return
         try:
             self._pool = await asyncpg.create_pool(
@@ -154,7 +158,19 @@ class PostgresStore:
             async with self._pool.acquire() as conn:
                 await conn.execute(_SCHEMA_SQL)
                 await self._apply_migrations(conn)
-        except Exception:
+            logger.info("PostgreSQL bağlantısı kuruldu")
+        except Exception as exc:
+            parsed = urlparse(self._dsn)
+            host = parsed.hostname or "unknown"
+            port = parsed.port or "unknown"
+            db = parsed.path.lstrip("/") or "unknown"
+            logger.warning(
+                "PostgreSQL bağlantısı kurulamadı: host=%s port=%s db=%s error=%s",
+                host,
+                port,
+                db,
+                exc,
+            )
             self._pool = None
 
     async def _apply_migrations(self, conn) -> None:
@@ -200,6 +216,7 @@ class PostgresStore:
         user_id: str = None,
     ) -> None:
         if not self._pool:
+            logger.debug("PostgreSQL pool yok, retrieval_log atlanıyor")
             return
         try:
             async with self._pool.acquire() as conn:
@@ -225,8 +242,8 @@ class PostgresStore:
                     answerability_fail,
                     self._hash_user_id(user_id),
                 )
-        except Exception:
-            pass
+        except Exception as _exc:
+            logger.warning("retrieval_log yazılamadı: %s", _exc)
 
     async def close(self) -> None:
         if self._pool:
@@ -262,8 +279,8 @@ class PostgresStore:
                     total_tokens,
                     latency_ms,
                 )
-        except Exception:
-            pass
+        except Exception as _exc:
+            logger.debug("DB write hatası: %s", _exc)
 
     async def log_audit_event(
         self,
@@ -275,6 +292,7 @@ class PostgresStore:
     ) -> None:
         """Audit olaylarını privacy-safe biçimde audit_events tablosuna yazar."""
         if not self._pool:
+            logger.debug("PostgreSQL pool yok, audit_event atlanıyor")
             return
         try:
             async with self._pool.acquire() as conn:
@@ -318,3 +336,69 @@ class PostgresStore:
                 return [dict(r) for r in rows]
         except Exception:
             return []
+
+    async def get_retrieval_stats(self, days: int = 7) -> list[dict]:
+        """Son N günün collection bazlı retrieval özetini döndürür."""
+        if not self._pool:
+            return []
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        collection,
+                        query_type,
+                        COUNT(*)                      AS calls,
+                        SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END)         AS cache_hits,
+                        SUM(CASE WHEN answerability_fail THEN 1 ELSE 0 END) AS answerability_fails,
+                        AVG(latency_ms)::INT          AS avg_latency_ms,
+                        AVG(hit_count)::FLOAT         AS avg_hit_count,
+                        AVG(top1_score)::FLOAT        AS avg_top1_score
+                    FROM retrieval_logs
+                    WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
+                    GROUP BY collection, query_type
+                    ORDER BY calls DESC
+                    """,
+                    str(days),
+                )
+                return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    async def get_audit_stats(self, days: int = 7) -> dict:
+        """Son N günün event_type bazlı audit özeti ile en son 5 olayı döndürür."""
+        if not self._pool:
+            return {"summary": [], "recent": []}
+        try:
+            async with self._pool.acquire() as conn:
+                # Event tipine göre sayım
+                summary_rows = await conn.fetch(
+                    """
+                    SELECT
+                        event_type,
+                        COUNT(*) AS count,
+                        MAX(created_at) AS last_seen
+                    FROM audit_events
+                    WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
+                    GROUP BY event_type
+                    ORDER BY count DESC
+                    """,
+                    str(days),
+                )
+                # En son 5 kayıt (debug için)
+                recent_rows = await conn.fetch(
+                    """
+                    SELECT event_type, collection, task_id, summary, created_at
+                    FROM audit_events
+                    WHERE created_at > NOW() - ($1 || ' days')::INTERVAL
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                    """,
+                    str(days),
+                )
+                return {
+                    "summary": [dict(r) for r in summary_rows],
+                    "recent": [dict(r) for r in recent_rows],
+                }
+        except Exception:
+            return {"summary": [], "recent": []}

@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import List, Dict, Any, Optional
 from src.shared.llm_client import get_llm_client
 from src.storage.episodic_store import EpisodicStore, MemoryEntry
@@ -64,14 +65,12 @@ class MemoryCompactor:
     async def prune_expired_memory(self, collection: str) -> str:
         """
         Faz 3: Süresi dolan bellek kayıtlarını temizle.
-        valid_to zamanı geçmiş olanları 'archived' yap.
+        valid_to zamanı geçmiş olanları fiziksel olarak siler.
         """
         try:
-            # Not: EpisodicStore'a pruning metodu eklenebilir
-            logger.info(f"Collection '{collection}' içinde süresi dolan kayıtlar temizleniyor")
-            
-            # Placeholder
-            return f"✅ Collection '{collection}' temizlendi"
+            deleted = await self.store.prune_expired(collection=collection, before_timestamp=time.time())
+            logger.info("Collection '%s' içinde %d süresi dolan kayıt silindi", collection, deleted)
+            return f"✅ Collection '{collection}': {deleted} süresi dolan kayıt silindi"
         except Exception as e:
-            logger.error(f"Expiry pruning hatası: {e}")
+            logger.error("Expiry pruning hatası: %s", e)
             return f"❌ Pruning başarısız: {e}"

@@ -78,10 +78,32 @@ class MemoryHandler:
         )
 
     async def search_decisions(self, query: str, collection: str = "", top_k: int = 5) -> str:
+        t0 = time.monotonic()
         entries = await self.decision_store.search_decisions(query, collection, top_k)
         if not entries:
+            await self.ctx.postgres.log_retrieval(
+                collection=collection,
+                redacted_query=query[:80],
+                query_type="decision_memory",
+                top_k=top_k,
+                hit_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                answerability_fail=True,
+            )
             return "🔍 Karar hafızasında uygun kayıt bulunamadı."
+        
         output = [f"## Karar Hafızası — '{query}'\n"]
         for item in entries:
             output.append(f"### {item.get('title', '')} — skor: {item.get('score', 0):.3f}\n{item.get('content', '')[:800]}\n")
+        
+        await self.ctx.postgres.log_retrieval(
+            collection=collection,
+            redacted_query=query[:80],
+            query_type="decision_memory",
+            top_k=top_k,
+            hit_count=len(entries),
+            top1_score=entries[0].get("score", 0.0) if entries else 0.0,
+            latency_ms=int((time.monotonic() - t0) * 1000),
+            cache_hit=False,
+        )
         return "\n".join(output)

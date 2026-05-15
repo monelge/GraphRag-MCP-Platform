@@ -10,6 +10,7 @@ Neden ayrı modül?
 from __future__ import annotations
 
 import logging
+import time
 
 from src.memory.models.memory_models import MemoryEntry, MemoryLayer, MemoryType, _MEMORY_TYPE_TO_LAYER
 
@@ -125,3 +126,49 @@ class EpisodicStore:
         except Exception as exc:
             logger.debug("EpisodicStore.search_memory hata: %s", exc)
             return []
+
+    async def prune_expired(self, collection: str = None, before_timestamp: float = None) -> int:
+        """valid_to < before_timestamp olan aktif kayıtları siler."""
+        from qdrant_client.models import FieldCondition, Filter, MatchValue, Range
+        from src.storage.qdrant_store import QdrantStore
+
+        store = QdrantStore(collection=self._collection)
+        await store.ensure_collection()
+
+        must_conditions = [
+            FieldCondition(key="source_type", match=MatchValue(value="episodic_memory")),
+            FieldCondition(key="status", match=MatchValue(value="active")),
+        ]
+        if collection:
+            must_conditions.append(FieldCondition(key="collection", match=MatchValue(value=collection)))
+
+        # valid_to var olan kayıtları bul (None olanlar expire etmez)
+        # Qdrant'ta null payload arama doğrudan yapılamaz; scroll sonrası python filtresi ile
+        total_deleted = 0
+        offset = None
+        while True:
+            points, next_offset = await store.client.scroll(
+                collection_name=self._collection,
+                limit=1000,
+                offset=offset,
+                with_payload=["valid_to", "collection", "status"],
+                with_vectors=False,
+            )
+            to_delete = []
+            for p in points:
+                payload = p.payload or {}
+                if payload.get("status") != "active":
+                    continue
+                if collection and payload.get("collection") != collection:
+                    continue
+                valid_to = payload.get("valid_to")
+                if valid_to is not None and valid_to < (before_timestamp or time.time()):
+                    to_delete.append(str(p.id))
+            if to_delete:
+                await store.delete_chunks_by_point_ids(to_delete)
+                total_deleted += len(to_delete)
+            if next_offset is None or not points:
+                break
+            offset = next_offset
+
+        return total_deleted
