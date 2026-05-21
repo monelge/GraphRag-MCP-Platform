@@ -2,10 +2,10 @@
   "mcpServers": {
     "graph-mcp": {
       "type": "stdio",
-      "command": "docker",
+      "command": "/usr/local/bin/docker",
       "args": [
         "exec", "-i",
-        "-e", "DEFAULT_COLLECTION=Vendoris",
+        "-e", "DEFAULT_COLLECTION=DefaultCol",
         "graph-mcp",
         "python", "-m", "src.mcp_server"
       ]
@@ -28,7 +28,14 @@
       "mcp__graph-mcp__execute_agent_task",
       "mcp__graph-mcp__index_project",
       "mcp__graph-mcp__summarize_repository",
-      "mcp__graph-mcp__analyze_change_impact"
+      "mcp__graph-mcp__analyze_change_impact",
+      "mcp__graph-mcp__store_memory",
+      "mcp__graph-mcp__store_decision_memory",
+      "mcp__graph-mcp__compact_memory",
+      "mcp__graph-mcp__incremental_index_project",
+      "mcp__graph-mcp__index_agent_docs",
+      "mcp__graph-mcp__run_verification_plan",
+      "mcp__graph-mcp__run_retrieval_eval"
     ]
   }
 }

@@ -22,7 +22,7 @@ class LocalSearcher:
                 redis_store=self.searcher.dense._redis
             )
         query_filter = Filter(
-            must=[FieldCondition(key="source_type", match=MatchValue(value="source_code"))]
+            must=[FieldCondition(key="source_type", match=MatchValue(value="code"))]
         )
         return await self.searcher.search(
             query,

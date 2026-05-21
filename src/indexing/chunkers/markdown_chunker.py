@@ -264,78 +264,79 @@ class MarkdownChunker:
                     i += 1
                 blocks.append(self._process_table(table_lines))
                 continue
-# --- Düz paragraf / boş satır ---
-para_lines = [line]
-i += 1
-while i < len(lines) and lines[i].strip() != "" and not lines[i].startswith("|") and not lines[i].strip().startswith("```"):
-    para_lines.append(lines[i])
-    i += 1
-blocks.append("\n".join(para_lines))
 
-return [b for b in blocks if b.strip()]
+            # --- Düz paragraf / boş satır ---
+            para_lines = [line]
+            i += 1
+            while i < len(lines) and lines[i].strip() != "" and not lines[i].startswith("|") and not lines[i].strip().startswith("```"):
+                para_lines.append(lines[i])
+                i += 1
+            blocks.append("\n".join(para_lines))
 
-def _process_table(self, table_lines: list[str]) -> str:
-"""
-Tablo config.chunk_max_chars'dan büyük değilse olduğu gibi döndürür.
-Büyükse başlık satırını her parçaya kopyalayarak satır gruplarına böler.
-"""
-full = "\n".join(table_lines)
-if len(full) <= config.chunk_max_chars:
-return full
+        return [b for b in blocks if b.strip()]
 
-# İlk 2 satır: başlık + separator (| --- | --- |)
-header = table_lines[:2]
-data_rows = table_lines[2:]
+    def _process_table(self, table_lines: list[str]) -> str:
+        """
+        Tablo config.chunk_max_chars'dan büyük değilse olduğu gibi döndürür.
+        Büyükse başlık satırını her parçaya kopyalayarak satır gruplarına böler.
+        """
+        full = "\n".join(table_lines)
+        if len(full) <= config.chunk_max_chars:
+            return full
 
-parts: list[str] = []
-current_rows: list[str] = []
+        # İlk 2 satır: başlık + separator (| --- | --- |)
+        header = table_lines[:2]
+        data_rows = table_lines[2:]
 
-for row in data_rows:
-probe = "\n".join(header + current_rows + [row])
-if len(probe) > config.chunk_max_chars and current_rows:
-    parts.append("\n".join(header + current_rows))
-    current_rows = [row]
-else:
-    current_rows.append(row)
+        parts: list[str] = []
+        current_rows: list[str] = []
 
-if current_rows:
-parts.append("\n".join(header + current_rows))
+        for row in data_rows:
+            probe = "\n".join(header + current_rows + [row])
+            if len(probe) > config.chunk_max_chars and current_rows:
+                parts.append("\n".join(header + current_rows))
+                current_rows = [row]
+            else:
+                current_rows.append(row)
 
-return "\n\n".join(parts)
+        if current_rows:
+            parts.append("\n".join(header + current_rows))
 
-def _pack_blocks(self, blocks: list[str]) -> list[str]:
-"""
-Atomik blokları toplayarak config.chunk_min_chars–config.chunk_max_chars
-aralığına sığan chunk'lar üretir.
-"""
-chunks: list[str] = []
-current_parts: list[str] = []
-current_len = 0
+        return "\n\n".join(parts)
 
-for block in blocks:
-blen = len(block)
-
-# Blok tek başına zaten MAX'ı aşıyorsa olduğu gibi al
-if blen > config.chunk_max_chars:
-    if current_parts:
-        chunks.append("\n\n".join(current_parts))
-        current_parts = []
+    def _pack_blocks(self, blocks: list[str]) -> list[str]:
+        """
+        Atomik blokları toplayarak config.chunk_min_chars–config.chunk_max_chars
+        aralığına sığan chunk'lar üretir.
+        """
+        chunks: list[str] = []
+        current_parts: list[str] = []
         current_len = 0
-    chunks.append(block)
-    continue
 
-# Mevcut birikime sığıyor mu?
-if current_len + blen + 2 <= config.chunk_max_chars:
-    current_parts.append(block)
-    current_len += blen + 2
-else:
-    if current_parts:
-        chunks.append("\n\n".join(current_parts))
-    current_parts = [block]
-    current_len = blen
+        for block in blocks:
+            blen = len(block)
 
-if current_parts:
-chunks.append("\n\n".join(current_parts))
+            # Blok tek başına zaten MAX'ı aşıyorsa olduğu gibi al
+            if blen > config.chunk_max_chars:
+                if current_parts:
+                    chunks.append("\n\n".join(current_parts))
+                    current_parts = []
+                    current_len = 0
+                chunks.append(block)
+                continue
 
-return chunks
+            # Mevcut birikime sığıyor mu?
+            if current_len + blen + 2 <= config.chunk_max_chars:
+                current_parts.append(block)
+                current_len += blen + 2
+            else:
+                if current_parts:
+                    chunks.append("\n\n".join(current_parts))
+                current_parts = [block]
+                current_len = blen
+
+        if current_parts:
+            chunks.append("\n\n".join(current_parts))
+
+        return chunks
 

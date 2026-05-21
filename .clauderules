@@ -1,0 +1,28 @@
+# 🤖 GraphRagMCP V2 Core Development Rules (SOTA)
+
+Bu dosya, **GraphRagMCP** sunucu projesinin kendi içinde çalışan Claude CLI (Claude Code) ve diğer entegre yapay zeka ajanları için **ZORUNLU** ve **DEĞİŞTİRİLEMEZ** core geliştirme kurallarını tanımlar.
+
+---
+
+## 🛡️ 1. Otonomluk ve Araç Kullanım Protokolü
+- **Primary Tool:** Platform içinde semantik sorgulamalar veya analizler için MCP sunucusu entegrasyonu (`graph-mcp`) aktiftir. Dosyaları satır satır okumak yerine `search_code` ve `search_agent_docs` araçlarını öncelikli olarak kullanın.
+- **Path Guardrails:** macOS GUI IDE'lerinde `docker` path uyuşmazlığını önlemek için `.claude/settings.json` ve `.mcp.json` dosyalarında her zaman `/usr/local/bin/docker` mutlak yolunu kullanın.
+
+---
+
+## 🏗️ 2. Core Mimari ve Kod Standartları
+
+- **Entrypoint Facade:** `src/mcp_server.py` dosyasını her zaman temiz tutun. MCP sunucusu stdio transport protokolünü kirletmemek için:
+  - Python `sys.stdout` yönlendirmesini en erken aşamada (`sys.stdout = sys.stderr`) gerçekleştirin.
+  - Harici C++ kütüphanelerinin (onnxruntime vb.) terminale basacağı stdout/stderr uyarılarını filtrelemek için gerekli OS env setlerini en başta yapın.
+- **Script Düzeni:**
+  - Tüm doğrulama ve entegrasyon test scriptlerini `/scripts/verification/` altında tutun.
+  - Tüm indeksleme, veri yükleme ve reindex scriptlerini `/scripts/indexing/` altında tutun.
+  - Tüm Docker ve servis başlatıcı (.sh) betikleri `/scripts/launchers/` dizininde olmalıdır.
+- **Premium Dökümantasyon:** Her zaman zengin HSL renk paletleri, Mermaid diyagramları, tablolar ve GitHub uyarı şablonları (`> [!NOTE]`, `> [!IMPORTANT]`) kullanarak premium dökümantasyon standartlarını koruyun.
+
+---
+
+## 🔒 3. Güvenlik ve Veritabanı Guardrails
+- **Secrets Management:** `OPENROUTER_API_KEY`, veritabanı şifreleri ve diğer hassas sırları asla kod tabanına veya git geçmişine dahil etmeyin. Sadece `.env` (gitignored) dosyasında tutun.
+- **Neo4j & Qdrant:** Veri tabanı bağlantılarında bolt protokolünü ve port doğrulamalarını her zaman çevre değişkenlerinden okuyarak gerçekleştirin.
