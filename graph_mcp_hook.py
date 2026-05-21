@@ -6,11 +6,16 @@ import subprocess
 
 # ── KONFİGÜRASYON ──────────────────────────────────────────────────────────
 # Docker konteyner ismi
-CONTAINER_NAME = "graph-mcp"
+CONTAINER_NAME = os.getenv("CONTAINER_NAME", "graph-mcp")
 # Proje kök dizini (Host üzerindeki yol)
 PROJECT_PATH = os.getcwd()
-HOST_PROJECTS_ROOT = Path("/Volumes/MacBook/RiderProjects").resolve()
-CONTAINER_PROJECTS_ROOT = Path("/projects")
+
+# .env dosyasından okumayı dene (isteğe bağlı, genelde hook ortamında .env olmayabilir)
+from dotenv import load_dotenv
+load_dotenv()
+
+HOST_PROJECTS_ROOT = Path(os.getenv("HOST_PROJECTS_ROOT", "/Volumes/MacBook/RiderProjects")).resolve()
+CONTAINER_PROJECTS_ROOT = Path(os.getenv("CONTAINER_PROJECTS_ROOT", "/projects"))
 
 
 def to_container_path(path_str):
@@ -60,7 +65,7 @@ def trigger_incremental_index(changed_files):
 
     container_project_path = to_container_path(PROJECT_PATH)
     if container_project_path is None:
-        print("❌ Proje yolu /Volumes/MacBook/RiderProjects altında değil, container path üretilemedi.")
+        print(f"❌ Proje yolu {HOST_PROJECTS_ROOT} altında değil, container path üretilemedi.")
         return
 
     print(f"🔄 {len(changed_files)} dosya için artımlı indeksleme başlatılıyor...")

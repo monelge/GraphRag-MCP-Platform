@@ -1,120 +1,73 @@
-"""
-Redis tabanlı embedding + retrieval cache ve concurrency lock yönetimi.
-
-Neden iki ayrı TTL?
-- Embedding cache (24h): Aynı metin tekrar gelirse OpenRouter API çağrısından kaçınmak için.
-  Embedding modeli değişmediği sürece aynı metin aynı vektörü üretir.
-- Retrieval cache (2h): Arama sonuçları index değişince stale olur; kısa TTL ile otomatik expire.
-
-Redis yoksa veya bağlantı hatalıysa tüm metodlar sessizce no-op döner;
-hiçbir zaman exception fırlatmaz — cache her zaman "nice to have" katmanıdır.
-"""
 from __future__ import annotations
-
 import hashlib
 import json
-import os
+import logging
+import math
 from typing import Optional
+from redis.asyncio import Redis
+from src.shared.config import config
 
-try:
-    import redis.asyncio as aioredis
-    _REDIS_AVAILABLE = True
-except ImportError:
-    _REDIS_AVAILABLE = False
-
-# Embedding cache: model değişmediği sürece deterministik — 24 saat yeterli.
-_EMB_TTL_SEC = 60 * 60 * 24
-# Retrieval cache: index güncellenince stale olabilir — kısa tutulur.
-_RET_TTL_SEC = 60 * 60 * 2
-# Index lock: uzun süren re-index işlemi için üst sınır 5 dakika.
-_LOCK_TTL_SEC = 60 * 5
-
+logger = logging.getLogger(__name__)
 
 class RedisStore:
-    """
-    Embedding ve retrieval sonuçları için async Redis cache.
-    Ayrıca eş zamanlı index işlemlerini engellemek için SETNX lock sağlar.
-    """
-
-    def __init__(self, url: str | None = None):
-        if not _REDIS_AVAILABLE:
-            # redis paketi yüklü değilse tüm metodlar no-op çalışır.
-            self._client = None
-            return
-        url = url or os.getenv("REDIS_URL", "redis://redis:6379")
-        self._client = aioredis.from_url(url, decode_responses=True)
+    def __init__(self, url: Optional[str] = None):
+        self.url = url or config.redis_url
+        self._client: Optional[Redis] = None
+        self._available = False
 
     @property
     def available(self) -> bool:
-        return self._client is not None
+        return self._available
 
-    # ── Yardımcı key üreticiler ──────────────────────────────────────────────
-
-    def _emb_key(self, text: str) -> str:
-        # Metin hash'i → key çakışması önler, bellek tahmin edilebilir
-        digest = hashlib.sha256(text.encode()).hexdigest()
-        return f"emb:{digest}"
-
-    def _ret_key(self, query_hash: str, collection: str) -> str:
-        return f"ret:{collection}:{query_hash}"
-
-    def _lock_key(self, collection: str, op: str) -> str:
-        return f"indexing_lock:{collection}:{op}"
-
-    # ── Embedding Cache ──────────────────────────────────────────────────────
-
-    async def get_embedding(self, text: str) -> Optional[list[float]]:
-        if not self._client:
-            return None
-        try:
-            val = await self._client.get(self._emb_key(text))
-            return json.loads(val) if val else None
-        except Exception:
-            return None
-
-    async def set_embedding(self, text: str, embedding: list[float]) -> None:
-        if not self._client:
+    async def connect(self):
+        if self._client:
             return
         try:
-            await self._client.setex(
-                self._emb_key(text), _EMB_TTL_SEC, json.dumps(embedding)
-            )
-        except Exception:
-            pass  # Cache yazma hatası hiçbir zaman işlemi engellememeli
+            self._client = Redis.from_url(self.url, decode_responses=True)
+            await self._client.ping()
+            self._available = True
+            logger.info("Redis bağlantısı başarılı: %s", self.url)
+        except Exception as exc:
+            logger.warning("Redis bağlantısı kurulamadı (cache devre dışı): %s", exc)
+            self._available = False
+            self._client = None
 
-    # ── Retrieval Cache ──────────────────────────────────────────────────────
+    async def close(self):
+        if self._client:
+            await self._client.close()
+            self._client = None
+            self._available = False
+
+    # --- Cache Metodları ---
 
     async def get_retrieval(self, collection: str, query: str) -> Optional[list]:
-        if not self._client:
-            return None
+        if not self.available: return None
         try:
-            key = self._ret_key(
-                hashlib.sha256(query.encode()).hexdigest(), collection
-            )
-            val = await self._client.get(key)
+            if query.startswith("__hash__:"):
+                query_hash = query.replace("__hash__:", "")
+            else:
+                query_hash = hashlib.sha256(query.encode()).hexdigest()
+            
+            val = await self._client.get(f"ret:{collection}:{query_hash}")
             return json.loads(val) if val else None
         except Exception:
             return None
 
-    async def set_retrieval(self, collection: str, query: str, results: list) -> None:
-        if not self._client:
-            return
+    async def set_retrieval(self, collection: str, query: str, results: list, ex: int = 3600):
+        if not self.available: return
         try:
-            key = self._ret_key(
-                hashlib.sha256(query.encode()).hexdigest(), collection
-            )
-            await self._client.setex(key, _RET_TTL_SEC, json.dumps(results))
+            if query.startswith("__hash__:"):
+                query_hash = query.replace("__hash__:", "")
+            else:
+                query_hash = hashlib.sha256(query.encode()).hexdigest()
+                
+            await self._client.set(f"ret:{collection}:{query_hash}", json.dumps(results), ex=ex)
         except Exception:
             pass
 
     async def invalidate_retrieval(self, collection: str) -> int:
-        """
-        incremental_index veya index_agent_docs tamamlandığında çağrılır.
-        İlgili koleksiyona ait tüm retrieval cache key'lerini siler.
-        Neden? Yeni index'lenen chunk'lar artık eski cache sonuçlarını stale kılar.
-        """
-        if not self._client:
-            return 0
+        """Koleksiyona ait tüm retrieval cache'ini temizler."""
+        if not self.available: return 0
         try:
             keys = []
             async for key in self._client.scan_iter(f"ret:{collection}:*"):
@@ -125,88 +78,59 @@ class RedisStore:
         except Exception:
             return 0
 
-    # ── Concurrency Lock ─────────────────────────────────────────────────────
-
-    async def acquire_lock(self, collection: str, op: str = "index") -> bool:
-        """
-        SETNX tabanlı dağıtık lock. True: kilit alındı, devam et.
-        False: başka bir index işlemi zaten devam ediyor, atla.
-
-        Neden önemli? Aynı koleksiyon için eş zamanlı iki index_agent_docs çağrısı
-        Qdrant'a duplikasyon veya tombstone çakışmasına yol açabilir.
-        """
-        if not self._client:
-            # Redis yoksa kilitlenmeden devam et
-            return True
-        try:
-            result = await self._client.set(
-                self._lock_key(collection, op),
-                "1",
-                nx=True,   # sadece anahtar yoksa yaz
-                ex=_LOCK_TTL_SEC,
-            )
-            return result is not None
-        except Exception:
-            return True  # Hata durumunda devam et — lock "nice to have"
-
-    async def release_lock(self, collection: str, op: str = "index") -> None:
-        if not self._client:
-            return
-        try:
-            await self._client.delete(self._lock_key(collection, op))
-        except Exception:
-            pass
-
-    async def close(self) -> None:
-        if self._client:
-            await self._client.aclose()
-
-    # ── Generic Raw Cache ───────────────────────────────────────────────────
-
     async def get_raw(self, key: str) -> Optional[str]:
-        if not self._client:
-            return None
+        if not self.available: return None
         try:
             return await self._client.get(key)
         except Exception:
             return None
 
-    async def set_raw(self, key: str, value: str, ttl: int | None = None) -> None:
-        if not self._client:
-            return
+    async def set_raw(self, key: str, value: str, ttl: int = 3600):
+        if not self.available: return
         try:
-            if ttl:
-                await self._client.setex(key, ttl, value)
-            else:
-                await self._client.set(key, value)
+            await self._client.set(key, value, ex=ttl)
         except Exception:
             pass
 
-    # ── Semantic Query Cache ─────────────────────────────────────────────────
-    # Exact-match cache (get_retrieval/set_retrieval) yanında semantik cache.
-    # Embedding vektörünü key prefix'e ekleyerek yakın sorgular için cache hit sağlar.
-    # Benzerlik kontrolü caller tarafında yapılır (bu sadece vektör saklar).
+    # --- Embedding Cache Metodları ---
+
+    def _embedding_key(self, text: str) -> str:
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+        return f"emb:{h}"
+
+    async def get_embedding(self, text: str) -> Optional[list[float]]:
+        if not self.available: return None
+        try:
+            val = await self._client.get(self._embedding_key(text))
+            return json.loads(val) if val else None
+        except Exception:
+            return None
+
+    async def set_embedding(self, text: str, vector: list[float], ex: int = 86400):
+        if not self.available: return
+        try:
+            await self._client.set(self._embedding_key(text), json.dumps(vector), ex=ex)
+        except Exception:
+            pass
+
+    # --- Semantic Query Cache Metodları ---
 
     async def get_query_embedding(self, collection: str, query: str) -> list[float] | None:
-        """Daha önce aranmış sorgu vektörünü döner (semantic cache lookup için)."""
-        if not self._client:
-            return None
+        if not self.available: return None
         try:
-            key = f"qemb:{collection}:{hashlib.sha256(query.encode()).hexdigest()}"
+            query_hash = hashlib.sha256(query.encode()).hexdigest()
+            key = f"qemb:{collection}:{query_hash}"
             val = await self._client.get(key)
             return json.loads(val) if val else None
         except Exception:
             return None
 
-    async def set_query_embedding(
-        self, collection: str, query: str, embedding: list[float]
-    ) -> None:
-        """Sorgu vektörünü semantic cache'e yazar (TTL=2h, retrieval cache ile aynı)."""
-        if not self._client:
-            return
+    async def set_query_embedding(self, collection: str, query: str, embedding: list[float], ex: int = 7200) -> None:
+        if not self.available: return
         try:
-            key = f"qemb:{collection}:{hashlib.sha256(query.encode()).hexdigest()}"
-            await self._client.setex(key, _RET_TTL_SEC, json.dumps(embedding))
+            query_hash = hashlib.sha256(query.encode()).hexdigest()
+            key = f"qemb:{collection}:{query_hash}"
+            await self._client.set(key, json.dumps(embedding), ex=ex)
         except Exception:
             pass
 
@@ -216,19 +140,9 @@ class RedisStore:
         query_embedding: list[float],
         similarity_threshold: float = 0.92,
     ) -> str | None:
-        """
-        Redis'teki qemb:collection:* key'lerini tarayarak
-        sorgu vektörüne benzer (cosine >= threshold) bir önceki sorgunun
-        hash'ini döner. Bulunamazsa None.
-
-        Not: n≤500 key için O(n) tarama kabul edilebilir.
-        Büyük cache'ler için ayrı bir similarity index gerekir (şimdilik kapsam dışı).
-        """
-        if not self._client or not query_embedding:
+        if not self.available or not query_embedding:
             return None
         try:
-            import math
-
             def cosine(a: list[float], b: list[float]) -> float:
                 dot = sum(x * y for x, y in zip(a, b))
                 ma = math.sqrt(sum(x * x for x in a))
@@ -241,9 +155,26 @@ class RedisStore:
                     continue
                 cached_emb = json.loads(val)
                 if cosine(query_embedding, cached_emb) >= similarity_threshold:
-                    # Key formatı: qemb:{collection}:{hash}
-                    query_hash = key.split(":")[-1]
-                    return query_hash
+                    return key.split(":")[-1]
         except Exception:
             pass
         return None
+
+    # --- Lock / Semaphor Metodları ---
+
+    async def acquire_lock(self, collection: str, op: str = "index", timeout: int = 600) -> bool:
+        if not self.available: return True
+        key = f"lock:{op}:{collection}"
+        try:
+            success = await self._client.set(key, "1", ex=timeout, nx=True)
+            return bool(success)
+        except Exception:
+            return True
+
+    async def release_lock(self, collection: str, op: str = "index"):
+        if not self.available: return
+        key = f"lock:{op}:{collection}"
+        try:
+            await self._client.delete(key)
+        except Exception:
+            pass

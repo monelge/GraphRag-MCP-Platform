@@ -45,9 +45,9 @@ class HybridSearcher:
       sıralamalarını birleştirerek en isabetli sonucu üretir.
     """
 
-    def __init__(self, collection: str = "codebase", top_k_fetch: int = 20):
+    def __init__(self, collection: str = "codebase", top_k_fetch: int = 20, redis_store=None):
         self.store  = QdrantStore(collection=collection)
-        self.dense  = DenseEmbedder()
+        self.dense  = DenseEmbedder(redis_store=redis_store)
         self.sparse = SparseEmbedder()
 
     async def search(self, query: str, top_k: int = 10, query_filter=None, fetch_k: int | None = None) -> list[dict]:

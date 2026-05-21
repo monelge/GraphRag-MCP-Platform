@@ -15,24 +15,16 @@ Temel kurallar:
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from src.shared.config import config
 from .chunk_models import AgentDocChunk
 from . import secret_scanner
 
-# Token tahmin katsayısı: ortalama İngilizce metin için 1 token ≈ 4 karakter.
-# Türkçe ve karma metin için biraz daha geniş tutuyoruz → 3.5 char/token.
-_CHARS_PER_TOKEN = 3.5
-_MIN_CHARS = int(300 * _CHARS_PER_TOKEN)   # ~1050
-_MAX_CHARS = int(800 * _CHARS_PER_TOKEN)   # ~2800
-
 # Dosya adından layer ve doc_priority belirleme tablosu.
-# Neden statik mapping? Policy kararları (hangi dosya kritik?) operasyonel bilgidir;
-# dosya adından otomatik çıkarımı az sayıda dosya için yeterlidir.
 _FILE_LAYER_MAP: dict[str, str] = {
     "security.md": "security",
     "rules.md": "rules",
@@ -66,22 +58,18 @@ _REQUIRED_ON_START: set[str] = {
 }
 
 # SecretScanner'ı bypass eden dosya pattern'leri (genellikle documentation)
-# .agent/ dosyaları intentional demo secrets içerir (JWT, token örnekleri)
-# Bu dosyalar operasyonel gizlilikleri değil, documentation'a ait örnektir
 _WHITELIST_SKIP_SCANNING: set[str] = {
-    "security.md",              # Demo JWT tokens, API key örnekleri
-    "rules.md",                 # Yapılandırma örnekleri
-    "backend.md",               # Backend pattern'leri, config örnekleri
-    "frontend.md",              # Frontend config örnekleri
-    "backend-architecture.md",  # Backend mimarisi (demo config'ler)
-    "mobile-plan.md",           # Mobile plan (BASE64 config'leri)
-    "mobile-state.md",          # Mobile state (BASE64 artifacts)
-    "mobile-tasks.md",          # Mobile tasks (BASE64 examples)
-    "state.md",                 # State documentation (BASE64 samples)
-    "tasks.md",                 # Task documentation (BASE64 samples)
+    "security.md",
+    "rules.md",
+    "backend.md",
+    "frontend.md",
+    "backend-architecture.md",
+    "mobile-plan.md",
+    "mobile-state.md",
+    "mobile-tasks.md",
+    "state.md",
+    "tasks.md",
 }
-ALLOW_SECRET_BYPASS = os.getenv("ALLOW_SECRET_BYPASS", "").lower() == "true"
-IS_PRODUCTION = os.getenv("ENVIRONMENT", "").lower() == "production"
 
 
 @dataclass
@@ -102,13 +90,7 @@ def _sha256(text: str) -> str:
 
 def _chunk_id(relative_path: str, h1: str, h2: str, h3: str,
                section_idx: int, chunk_idx: int) -> str:
-    """
-    Konum tabanlı stabil kimlik.
-    Neden content'e bağlı değil?
-      checksum zaten içerik değişimini izler.
-      chunk_id'nin konuma bağlı stabil olması sayesinde aynı pozisyondaki chunk
-      incremental sync'de doğru eşleştirilir.
-    """
+    """Konum tabanlı stabil kimlik."""
     key = f"{relative_path}|{h1}|{h2}|{h3}|{section_idx}|{chunk_idx}"
     return _sha256(key)
 
@@ -116,14 +98,7 @@ def _chunk_id(relative_path: str, h1: str, h2: str, h3: str,
 class MarkdownChunker:
 
     def chunk_file(self, file_path: str, relative_path: Optional[str] = None) -> list[AgentDocChunk]:
-        """
-        Dosyayı okur ve chunk listesi döndürür.
-        relative_path verilmezse file_path'ten türetilir.
-        
-        Whitelist Davranışı:
-          - SecretScanner bypass'ı yalnızca explicit opt-in ile ve production dışında açılır
-          - .agent/ documentation dosyalarında intentional demo secrets bulunabilir
-        """
+        """Dosyayı okur ve chunk listesi döndürür."""
         path = Path(file_path)
         content = path.read_text(encoding="utf-8")
         rel = relative_path or str(path)
@@ -135,8 +110,8 @@ class MarkdownChunker:
         
         # Bypass yalnızca geliştirme/test senaryolarında explicit olarak açılabilir.
         skip_scanning = (
-            ALLOW_SECRET_BYPASS
-            and not IS_PRODUCTION
+            config.allow_secret_bypass
+            and config.environment != "production"
             and filename in _WHITELIST_SKIP_SCANNING
         )
 
@@ -170,15 +145,12 @@ class MarkdownChunker:
                 if not sub_text:
                     continue
 
-                # SecretScanner — son savunma hattı
-                # Demo bypass yalnızca non-production opt-in modunda çalışır.
                 if not skip_scanning:
                     scan = secret_scanner.scan(sub_text)
                     if scan.should_skip:
                         continue
                     final_text = scan.redacted_text
                 else:
-                    # Whitelist dosyası: scanning skip et, demo secrets izin ver
                     final_text = sub_text
 
                 cid = _chunk_id(relative_path, section.h1, section.h2,
@@ -201,10 +173,7 @@ class MarkdownChunker:
         return result
 
     def _parse_sections(self, content: str) -> list[_Section]:
-        """
-        İçeriği başlık hiyerarşisine göre bölümlere ayırır.
-        Kod fence içindeki # satırları başlık sayılmaz.
-        """
+        """İçeriği başlık hiyerarşisine göre bölümlere ayırır."""
         sections: list[_Section] = []
         current = _Section()
         in_fence = False
@@ -215,7 +184,6 @@ class MarkdownChunker:
         for line in lines:
             stripped = line.strip()
 
-            # Kod fence takibi — fence içinde başlık ayrıştırması yapılmaz
             if not in_fence:
                 if stripped.startswith("```"):
                     in_fence = True
@@ -229,21 +197,18 @@ class MarkdownChunker:
                 current.lines.append(line)
                 continue
 
-            # H1 başlığı → yeni ana bölüm
             if re.match(r"^# [^#]", line):
                 if current.lines or current.h1:
                     sections.append(current)
                 current = _Section(h1=line.lstrip("# ").strip())
                 continue
 
-            # H2 başlığı → alt bölüm, H1 korunur
             if re.match(r"^## [^#]", line):
                 if current.lines or current.h2:
                     sections.append(current)
                 current = _Section(h1=current.h1, h2=line.lstrip("# ").strip())
                 continue
 
-            # H3 başlığı → alt-alt bölüm, H1+H2 korunur
             if re.match(r"^### [^#]", line):
                 if current.lines or current.h3:
                     sections.append(current)
@@ -256,33 +221,21 @@ class MarkdownChunker:
 
             current.lines.append(line)
 
-        # Son bölümü ekle
         if current.lines or current.h1:
             sections.append(current)
 
         return sections
 
     def _split_section(self, text: str) -> list[str]:
-        """
-        Bir bölümü MAX_CHARS sınırına göre parçalar.
-        Öncelik sırası:
-          1. Kod blokları: ``` ... ``` asla bölünmez
-          2. Tablolar: | satırları tek blok (başlık her parçaya kopyalanır)
-          3. Paragraf: boş satırda bölünür
-        """
-        if len(text) <= _MAX_CHARS:
+        """Bir bölümü config.chunk_max_chars sınırına göre parçalar."""
+        if len(text) <= config.chunk_max_chars:
             return [text]
 
         blocks = self._extract_blocks(text)
         return self._pack_blocks(blocks)
 
     def _extract_blocks(self, text: str) -> list[str]:
-        """
-        Metni atomik bloklara böler:
-          - Kod fence bloğu → tek atom
-          - Tablo bloğu → tek atom (başlık + satırlar)
-          - Düz paragraf → boş satırda ayrılan parçalar
-        """
+        """Metni atomik bloklara böler."""
         blocks: list[str] = []
         lines = text.splitlines(keepends=False)
         i = 0
@@ -290,7 +243,6 @@ class MarkdownChunker:
         while i < len(lines):
             line = lines[i]
 
-            # --- Kod fence başlangıcı ---
             if line.strip().startswith("```"):
                 fence_lines = [line]
                 marker = line.strip()[:3]
@@ -304,7 +256,6 @@ class MarkdownChunker:
                 blocks.append("\n".join(fence_lines))
                 continue
 
-            # --- Tablo başlangıcı (| ile başlayan satır) ---
             if line.startswith("|"):
                 table_lines = [line]
                 i += 1
@@ -313,84 +264,78 @@ class MarkdownChunker:
                     i += 1
                 blocks.append(self._process_table(table_lines))
                 continue
+# --- Düz paragraf / boş satır ---
+para_lines = [line]
+i += 1
+while i < len(lines) and lines[i].strip() != "" and not lines[i].startswith("|") and not lines[i].strip().startswith("```"):
+    para_lines.append(lines[i])
+    i += 1
+blocks.append("\n".join(para_lines))
 
-            # --- Düz paragraf / boş satır ---
-            para_lines = [line]
-            i += 1
-            while i < len(lines) and lines[i].strip() != "" and not lines[i].startswith("|") and not lines[i].strip().startswith("```"):
-                para_lines.append(lines[i])
-                i += 1
-            blocks.append("\n".join(para_lines))
+return [b for b in blocks if b.strip()]
 
-        return [b for b in blocks if b.strip()]
+def _process_table(self, table_lines: list[str]) -> str:
+"""
+Tablo config.chunk_max_chars'dan büyük değilse olduğu gibi döndürür.
+Büyükse başlık satırını her parçaya kopyalayarak satır gruplarına böler.
+"""
+full = "\n".join(table_lines)
+if len(full) <= config.chunk_max_chars:
+return full
 
-    def _process_table(self, table_lines: list[str]) -> str:
-        """
-        Tablo 800 token'dan büyük değilse olduğu gibi döndürür.
-        Büyükse başlık satırını her parçaya kopyalayarak satır gruplarına böler.
-        Sonuç tek string olarak döndürülür (parçalar \n---\n ile ayrılır);
-        _pack_blocks bu iç bölünmeyi daha sonra işler.
-        """
-        full = "\n".join(table_lines)
-        if len(full) <= _MAX_CHARS:
-            return full
+# İlk 2 satır: başlık + separator (| --- | --- |)
+header = table_lines[:2]
+data_rows = table_lines[2:]
 
-        # İlk 2 satır: başlık + separator (| --- | --- |)
-        header = table_lines[:2]
-        data_rows = table_lines[2:]
+parts: list[str] = []
+current_rows: list[str] = []
 
-        parts: list[str] = []
-        current_rows: list[str] = []
+for row in data_rows:
+probe = "\n".join(header + current_rows + [row])
+if len(probe) > config.chunk_max_chars and current_rows:
+    parts.append("\n".join(header + current_rows))
+    current_rows = [row]
+else:
+    current_rows.append(row)
 
-        for row in data_rows:
-            probe = "\n".join(header + current_rows + [row])
-            if len(probe) > _MAX_CHARS and current_rows:
-                parts.append("\n".join(header + current_rows))
-                current_rows = [row]
-            else:
-                current_rows.append(row)
+if current_rows:
+parts.append("\n".join(header + current_rows))
 
-        if current_rows:
-            parts.append("\n".join(header + current_rows))
+return "\n\n".join(parts)
 
-        return "\n\n".join(parts)
+def _pack_blocks(self, blocks: list[str]) -> list[str]:
+"""
+Atomik blokları toplayarak config.chunk_min_chars–config.chunk_max_chars
+aralığına sığan chunk'lar üretir.
+"""
+chunks: list[str] = []
+current_parts: list[str] = []
+current_len = 0
 
-    def _pack_blocks(self, blocks: list[str]) -> list[str]:
-        """
-        Atomik blokları toplayarak MIN_CHARS–MAX_CHARS aralığına sığan
-        chunk'lar üretir.
+for block in blocks:
+blen = len(block)
 
-        Neden pack?
-          Tek başına çok kısa olan bloklar (ör. tek satır paragraf) birleştirilir;
-          bu şekilde retrieval'da daha anlamlı bağlam taşıyan chunk'lar elde edilir.
-        """
-        chunks: list[str] = []
-        current_parts: list[str] = []
+# Blok tek başına zaten MAX'ı aşıyorsa olduğu gibi al
+if blen > config.chunk_max_chars:
+    if current_parts:
+        chunks.append("\n\n".join(current_parts))
+        current_parts = []
         current_len = 0
+    chunks.append(block)
+    continue
 
-        for block in blocks:
-            blen = len(block)
+# Mevcut birikime sığıyor mu?
+if current_len + blen + 2 <= config.chunk_max_chars:
+    current_parts.append(block)
+    current_len += blen + 2
+else:
+    if current_parts:
+        chunks.append("\n\n".join(current_parts))
+    current_parts = [block]
+    current_len = blen
 
-            # Blok tek başına zaten MAX'ı aşıyorsa olduğu gibi al
-            if blen > _MAX_CHARS:
-                if current_parts:
-                    chunks.append("\n\n".join(current_parts))
-                    current_parts = []
-                    current_len = 0
-                chunks.append(block)
-                continue
+if current_parts:
+chunks.append("\n\n".join(current_parts))
 
-            # Mevcut birikime sığıyor mu?
-            if current_len + blen + 2 <= _MAX_CHARS:
-                current_parts.append(block)
-                current_len += blen + 2
-            else:
-                if current_parts:
-                    chunks.append("\n\n".join(current_parts))
-                current_parts = [block]
-                current_len = blen
+return chunks
 
-        if current_parts:
-            chunks.append("\n\n".join(current_parts))
-
-        return chunks

@@ -1,20 +1,11 @@
 """
 Token Budget Optimizer — context boyutunu query tipine göre dinamik kısıtlar.
 
-Neden sabit budget değil?
-  - config_lookup: tek bir komut/ayar beklenir → 1200 token yeterli
-  - factual_doc: kural/tanım açıklaması → 1800 token
-  - code_relation: bağımlılık zinciri → 2500 token
-  - broad_summary: genel bakış → 4000 token (maksimum)
-
-"128k context brute force" yaklaşımının tam tersi:
-  LLM'e daha az ama daha isabetli chunk gönder.
-
 Token tahmini: 1 token ≈ 4 karakter (İngilizce/kod için güvenli sabit).
 """
 
 from __future__ import annotations
-from src.retrieval.search.query_classifier import QueryType
+from src.shared.config import config
 
 # Query tipi → maksimum token bütçesi
 TOKEN_BUDGET: dict[str, int] = {
@@ -24,13 +15,11 @@ TOKEN_BUDGET: dict[str, int] = {
     "broad_summary":  4000,
 }
 
-_CHARS_PER_TOKEN = 4
-
 
 def get_budget_chars(query_type: str) -> int:
     """Query tipine göre karakter cinsinden token bütçesi döner."""
-    tokens = TOKEN_BUDGET.get(query_type, 1800)
-    return tokens * _CHARS_PER_TOKEN
+    tokens = TOKEN_BUDGET.get(query_type, config.default_token_budget)
+    return int(tokens * config.context_chars_per_token)
 
 
 class TokenBudgetOptimizer:
@@ -69,8 +58,6 @@ class TokenBudgetOptimizer:
             chunk_chars = len(content)
 
             if used_chars + chunk_chars > budget_chars:
-                # Bütçe doldu — daha küçük bir sonraki chunk sığabilir mi?
-                # (greedy değil: ilk aşımda dur)
                 break
 
             selected.append(chunk)

@@ -1,33 +1,28 @@
 from __future__ import annotations
 import logging
-import os
 import uuid
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Distance, VectorParams, SparseVectorParams,
     SparseIndexParams, PointStruct, SparseVector,
-    ScrollRequest, FieldCondition, Filter, MatchAny, MatchValue,
+    FieldCondition, Filter, MatchValue,
     PayloadSchemaType, PointIdsList,
-    SetPayload,
 )
+from src.shared.config import config
 from src.indexing.chunkers.chunk_models import CodeChunk, AgentDocChunk
 
 logger = logging.getLogger(__name__)
 
-DIM = int(os.getenv("EMBEDDING_DIM", "1536"))
-
 
 class QdrantStore:
-    def __init__(self, collection: str = "codebase"):
+    def __init__(self, collection: str | None = None):
         # Her proje kendi koleksiyonuna sahip olur; ad proje dizin adından gelir.
-        self.collection = collection
-        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-        api_key = os.getenv("QDRANT_API_KEY") or None
-        logger.debug("Initializing QdrantStore collection=%s url=%s", collection, qdrant_url)
+        self.collection = collection or config.default_collection
+        logger.debug("Initializing QdrantStore collection=%s url=%s", self.collection, config.qdrant_url)
         try:
             self.client = AsyncQdrantClient(
-                url=qdrant_url,
-                api_key=api_key,
+                url=config.qdrant_url,
+                api_key=config.qdrant_api_key,
             )
         except Exception as exc:
             logger.error("Qdrant AsyncQdrantClient initialization failed: %s", exc)
@@ -37,8 +32,6 @@ class QdrantStore:
         """
         Koleksiyonu oluşturur. Varsa dokunmaz.
         Dense + Sparse vektörler aynı koleksiyonda yaşar — hibrit arama budur.
-        Payload index'leri de burada oluşturulur; source_type, layer, doc_priority
-        ve is_deleted sık filtrelenen alanlardır.
         """
         existing = await self.client.get_collections()
         names = [c.name for c in existing.collections]
@@ -47,7 +40,7 @@ class QdrantStore:
             await self.client.create_collection(
                 collection_name=self.collection,
                 vectors_config={
-                    "dense": VectorParams(size=DIM, distance=Distance.COSINE),
+                    "dense": VectorParams(size=config.embedding_dim, distance=Distance.COSINE),
                 },
                 sparse_vectors_config={
                     "sparse": SparseVectorParams(
@@ -55,8 +48,6 @@ class QdrantStore:
                     ),
                 },
             )
-            # Sık filtrelenen alanlar için payload index — küçük ölçekte opsiyonel
-            # ama tutarlılık için şimdi tanımlanır
             for field_name in ("source_type", "layer", "doc_priority", "is_deleted", "relative_path", "chunk_type", "project_name"):
                 await self.client.create_payload_index(
                     collection_name=self.collection,
@@ -68,12 +59,7 @@ class QdrantStore:
             logger.debug("Qdrant collection zaten mevcut: %s", self.collection)
 
     async def get_indexed_file_paths(self) -> set[str]:
-        """
-        Qdrant'ta zaten indekslenmiş dosya yollarını döndürür.
-        Resume desteği için kullanılır — bu dosyalar atlanır.
-        Scroll API ile tüm payload'ları tarar; büyük koleksiyonlarda
-        offset tabanlı sayfalama ile çalışır.
-        """
+        """Qdrant'ta zaten indekslenmiş dosya yollarını döndürür."""
         indexed: set[str] = set()
         offset = None
 
@@ -92,7 +78,6 @@ class QdrantStore:
                 if fp:
                     indexed.add(fp)
 
-            # next_offset None ise tüm kayıtlar okundu
             if next_offset is None:
                 break
             offset = next_offset
@@ -106,15 +91,14 @@ class QdrantStore:
         sparse_vecs,
         extra_payload: dict | None = None,
     ):
-        """
-        Chunk'ları hem dense hem sparse vektörleriyle birlikte Qdrant'a yazar.
-        Payload olarak ham kodu ve meta veriyi de saklarız — arama sonucunda
-        doğrudan orijinal koda erişmek için.
-        """
+        """Chunk'ları hem dense hem sparse vektörleriyle birlikte Qdrant'a yazar."""
         points = []
         for chunk, dense, sparse in zip(chunks, dense_vecs, sparse_vecs):
-            # CodeChunk to_dict ile tüm provenance metadata'yı alıyoruz
             payload = chunk.to_dict()
+            # Arama filtreleri (CODE_ONLY_FILTER) için source_type=code zorunludur.
+            if "source_type" not in payload:
+                payload["source_type"] = "code"
+            
             if extra_payload:
                 payload.update(extra_payload)
 
@@ -131,17 +115,9 @@ class QdrantStore:
             ))
         await self.client.upsert(collection_name=self.collection, points=points)
 
-    # ------------------------------------------------------------------
-    # Agent Doc metodları — source_type='agent_doc' chunk'ları
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _chunk_id_to_point_id(chunk_id: str) -> str:
-        """
-        chunk_id (SHA256 hex) → Qdrant UUID point ID.
-        """
-        # SHA256 hex string'ini stabil bir UUID'ye dönüştürmenin en güvenli yolu
-        # namespace tabanlı UUID5 kullanmaktır.
+        """chunk_id (SHA256 hex) → Qdrant UUID point ID."""
         import uuid as _uuid
         NAMESPACE_GRAPH_MCP = _uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
         return str(_uuid.uuid5(NAMESPACE_GRAPH_MCP, chunk_id))
@@ -152,11 +128,7 @@ class QdrantStore:
         dense_vecs: list[list[float]],
         sparse_vecs,
     ) -> None:
-        """
-        Agent doc chunk'larını Qdrant'a yazar.
-        source_type='agent_doc' payload alanı ile kod chunk'larından ayrılır;
-        bu sayede search_code() ve search_agent_docs() birbirinin sonuçlarına karışmaz.
-        """
+        """Agent doc chunk'larını Qdrant'a yazar."""
         points = []
         for chunk, dense, sparse in zip(chunks, dense_vecs, sparse_vecs):
             points.append(PointStruct(
@@ -188,15 +160,7 @@ class QdrantStore:
         await self.client.upsert(collection_name=self.collection, points=points)
 
     async def get_agent_doc_chunks_by_path(self, relative_path: str) -> list[dict]:
-        """
-        Verilen relative_path için Qdrant'taki mevcut agent_doc chunk'larını döndürür.
-        Her kayıt: {point_id (UUID str), chunk_id, checksum}
-
-        Neden bu metot?
-          index_agent_docs()'un incremental sync'i için disk checksum'u ile
-          Qdrant checksum'u karşılaştırmak gerekir. Değişmeyen chunk'lar
-          yeniden embed edilmez — token + zaman tasarrufu.
-        """
+        """Verilen relative_path için Qdrant'taki mevcut agent_doc chunk'larını döndürür."""
         results: list[dict] = []
         offset = None
 
@@ -228,11 +192,7 @@ class QdrantStore:
         return results
 
     async def get_all_agent_doc_paths(self) -> set[str]:
-        """
-        Koleksiyondaki tüm agent_doc chunk'larının relative_path değerlerini döndürür.
-        index_agent_docs() sonunda silinmiş dosyaları tespit etmek için kullanılır:
-          disk_paths - qdrant_paths = tombstone edilmesi gereken yollar
-        """
+        """Koleksiyondaki tüm agent_doc chunk'larının relative_path değerlerini döndürür."""
         paths: set[str] = set()
         offset = None
 
@@ -260,11 +220,7 @@ class QdrantStore:
         return paths
 
     async def delete_chunks_by_point_ids(self, point_ids: list[str]) -> None:
-        """
-        UUID point ID listesine göre chunk'ları fiziksel olarak siler.
-        Atomic two-phase sync'in ikinci adımı: yeni chunk'lar başarıyla
-        yüklendikten sonra eski chunk'lar bu metotla silinir.
-        """
+        """UUID point ID listesine göre chunk'ları fiziksel olarak siler."""
         if not point_ids:
             return
         await self.client.delete(
@@ -273,12 +229,7 @@ class QdrantStore:
         )
 
     async def delete_by_filter(self, filter_obj: Filter) -> int:
-        """
-        Bir filter'e uyan tüm noktaları fiziksel olarak siler.
-        Memory expiry pruning ve tombstone purge için kullanılır.
-        """
-        # Önce scroll ile point_id'leri topla (AsyncQdrantClient'ta Filter points_selector
-        # doğrudan desteklenmeyebilir — güvenli yol scroll + batch delete)
+        """Bir filter'e uyan tüm noktaları fiziksel olarak siler."""
         point_ids: list[str] = []
         offset = None
         while True:
@@ -304,12 +255,7 @@ class QdrantStore:
         return len(point_ids)
 
     async def tombstone_chunks_by_path(self, relative_path: str) -> None:
-        """
-        Silinen dosyanın chunk'larına is_deleted=True yazar.
-        Neden tombstone, fiziksel silme değil?
-          30 gün içinde arama yapılırsa eski içerik is_deleted filtresiyle
-          hariç tutulur; veri kaybı yaşanmaz. 30 gün sonra purge çalışabilir.
-        """
+        """Silinen dosyanın chunk'larına is_deleted=True yazar."""
         tombstone_filter = Filter(must=[
             FieldCondition(key="source_type", match=MatchValue(value="agent_doc")),
             FieldCondition(key="relative_path", match=MatchValue(value=relative_path)),

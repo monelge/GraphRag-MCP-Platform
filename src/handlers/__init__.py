@@ -4,6 +4,7 @@ from .execution_handler import ExecutionHandler
 from .indexing_handler import IndexingHandler
 from .memory_handler import MemoryHandler
 from .retrieval_handler import RetrievalHandler
+from .orchestration_handler import OrchestrationHandler
 
 __all__ = [
     "AppContext",
@@ -12,4 +13,5 @@ __all__ = [
     "MemoryHandler",
     "ExecutionHandler",
     "ControlHandler",
+    "OrchestrationHandler",
 ]

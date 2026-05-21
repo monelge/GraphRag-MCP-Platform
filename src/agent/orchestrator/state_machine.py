@@ -119,8 +119,29 @@ class TaskOrchestrator:
                 async with conn.transaction():
                     await self._save_checkpoint(task, current_node, step_index, conn=conn)
                     result = await node.run(task, self.app_context)
+                    
+                    # --- Agent Plane V2: Reflection Loop & Self-Correction ---
+                    if not result.success and current_node in ["verifier", "reviewer"]:
+                        # Maksimum deneme sayısını kontrol et (Loop önleme)
+                        attempts = task.context.get("reflection_attempts", 0)
+                        if attempts < 3:
+                            logger.info("Task %s: %s başarısız, Reflection Loop başlatılıyor (Deneme %d/3)", task_id, current_node, attempts + 1)
+                            task.context["reflection_attempts"] = attempts + 1
+                            task.context["last_failure_feedback"] = result.output
+                            result.next_node = "editor"  # Tekrar editor'e dön
+                            task.status = TaskStatus.EXECUTING
+                        else:
+                            logger.warning("Task %s: Maksimum reflection denemesine ulaşıldı.", task_id)
+                            task.status = TaskStatus.FAILED
+                    
                     task.context.update(result.context_updates)
                     task.context["current_node"] = result.next_node
+
+                    # V2: Planner tarafından üretilen adımları formal task.steps listesine işle
+                    if "planned_steps" in result.context_updates and not task.steps:
+                        for step_desc in result.context_updates["planned_steps"]:
+                            task.add_step(step_desc)
+
                     # Node token kullanımını görev bağlamında biriktir
                     if result.token_usage > 0:
                         prev = task.context.get("total_token_usage", 0)

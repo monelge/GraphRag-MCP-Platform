@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from src.shared.config import config
 
 
 class MountPolicy:
     """Read-only ve read-write mount kurallarını normalize ederek uygular."""
 
     def __init__(self, allowed_paths: list[str] | None = None, readonly_paths: list[str] | None = None):
-        env_readonly = self._parse_env_paths("MOUNT_READONLY_PATHS", ["/projects"])
-        env_allowed = self._parse_env_paths("MOUNT_READWRITE_PATHS", ["/tmp"])
-        self.allowed_paths = self._normalize_paths(allowed_paths if allowed_paths is not None else env_allowed)
-        self.readonly_paths = self._normalize_paths(readonly_paths if readonly_paths is not None else env_readonly)
+        self.allowed_paths = self._normalize_paths(allowed_paths if allowed_paths is not None else config.mount_readwrite_paths)
+        self.readonly_paths = self._normalize_paths(readonly_paths if readonly_paths is not None else config.mount_readonly_paths)
 
     def is_read_allowed(self, path: str) -> bool:
         """Path read-write veya read-only mount altında ise okumaya izin verir."""
@@ -24,13 +23,6 @@ class MountPolicy:
         """Yalnızca read-write mount altında kalan path'lere yazıma izin verir."""
         normalized = self._normalize_path(path)
         return self._is_under(normalized, self.allowed_paths)
-
-    @staticmethod
-    def _parse_env_paths(name: str, default: list[str]) -> list[str]:
-        raw = os.getenv(name)
-        if raw is None:
-            return list(default)
-        return [item for item in raw.split(":") if item]
 
     @staticmethod
     def _normalize_paths(paths: list[str]) -> list[str]:

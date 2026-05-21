@@ -13,6 +13,7 @@ from src.indexing.embedders.sparse_embedder import SparseEmbedder
 from src.shared.project_registry import ProjectProfile
 from src.storage.qdrant_store import QdrantStore
 from src.storage.redis_store import RedisStore
+from src.indexing.extractors.repo_map import build_repo_map
 
 
 _EXT_LANGUAGE = {
@@ -237,6 +238,46 @@ async def generate_global_architecture_summary(collection: str, neo4j_store: Neo
     return "\n".join(lines)
 
 
+async def generate_repo_map(collection: str, neo4j_store: Neo4jStore) -> str:
+    """Projenin sıkıştırılmış iskelet haritasını (Repo Map) üretir."""
+    skeleton = await neo4j_store.get_repo_skeleton(collection)
+    if not skeleton:
+        return ""
+    
+    lines = ["## 🗺️ Repo Map (Sıkıştırılmış Proje Haritası)", "Projenin yapısal iskeleti:"]
+    for mod in skeleton:
+        mod_name = Path(mod["module"]).name
+        lines.append(f"\n### 📦 {mod_name}")
+        classes: dict[str, list[str]] = {}
+        for item in mod["structure"]:
+            cls_name = item.get("class") or "global"
+            func_name = item.get("func")
+            if func_name:
+                classes.setdefault(cls_name, []).append(func_name)
+        
+        for cls, funcs in classes.items():
+            if cls == "global":
+                lines.append(f"  - Functions: {', '.join(funcs[:10])}")
+            else:
+                lines.append(f"  - Class `{cls}`: {', '.join(funcs[:8])}")
+    return "\n".join(lines)
+
+
+async def generate_community_reports(collection: str, neo4j_store: Neo4jStore) -> str:
+    """Mantıksal topluluk özetlerini üretir."""
+    communities = await neo4j_store.detect_communities(collection)
+    if not communities:
+        return ""
+    
+    lines = ["## 👥 Mantıksal Kod Toplulukları", "Birbirine sıkı bağlı kod grupları:"]
+    for i, comm in enumerate(communities[:5], 1):
+        center = comm["center"]
+        members = comm["community_members"]
+        lines.append(f"{i}. **{center} Odaklı Grup** (Güç: {comm['strength']})")
+        lines.append(f"   - Üyeler: {', '.join(members[:8])}")
+    return "\n".join(lines)
+
+
 async def sync_project_intelligence(
     project_path: str,
     collection: str = "",
@@ -249,8 +290,9 @@ async def sync_project_intelligence(
 
     chunks = build_summary_chunks(profile)
     
-    # Global Mimari Özeti ekle (eğer neo4j varsa)
+    # --- Knowledge Plane V2 Enrichment ---
     if neo4j_store:
+        # 1. Global Mimari Özeti
         arch_text = await generate_global_architecture_summary(profile.collection, neo4j_store)
         chunks.append(
             CodeChunk(
@@ -264,6 +306,38 @@ async def sync_project_intelligence(
                 end_line=0,
             )
         )
+        
+        # 2. Repo Map (Skelet)
+        repo_map_text = await generate_repo_map(profile.collection, neo4j_store)
+        if repo_map_text:
+            chunks.append(
+                CodeChunk(
+                    chunk_id=_stable_id(profile.collection, "repo_map"),
+                    file_path=f"summary://{profile.collection}/repo_map",
+                    language="markdown",
+                    chunk_type="repo_summary",
+                    name="Repository Map",
+                    code=repo_map_text,
+                    start_line=0,
+                    end_line=0,
+                )
+            )
+
+        # 3. Community Reports
+        comm_text = await generate_community_reports(profile.collection, neo4j_store)
+        if comm_text:
+            chunks.append(
+                CodeChunk(
+                    chunk_id=_stable_id(profile.collection, "communities"),
+                    file_path=f"summary://{profile.collection}/communities",
+                    language="markdown",
+                    chunk_type="repo_summary",
+                    name="Community Reports",
+                    code=comm_text,
+                    start_line=0,
+                    end_line=0,
+                )
+            )
 
     dense = DenseEmbedder(redis_store=redis_store)
     sparse = SparseEmbedder()
@@ -279,6 +353,14 @@ async def sync_project_intelligence(
             "project_name": profile.project_name,
         },
     )
+    
+    # Knowledge Plane V2: Semantik Repo Map'i Redis cache'e işle (Performans için)
+    if redis_store:
+        try:
+            await build_repo_map(profile.collection, neo4j_store, redis_store)
+        except Exception as exc:
+            logger.warning("Repo map cache üretilemedi: %s", exc)
+
     return profile
 
 

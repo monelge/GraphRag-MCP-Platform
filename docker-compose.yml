@@ -9,17 +9,22 @@ services:
       - "127.0.0.1:7474:7474"
       - "127.0.0.1:7687:7687"
     environment:
+      - TZ=Europe/Istanbul
       - NEO4J_AUTH=${NEO4J_USER}/${NEO4J_PASSWORD}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_apoc_import_file_enabled=true
       - NEO4J_apoc_export_file_enabled=true
       - NEO4J_apoc_trigger_enabled=true
-      - NEO4J_dbms_security_procedures_unrestricted=apoc.* 
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_server_memory_heap_initial__size=1G
+      - NEO4J_server_memory_heap_max__size=4G
+      - NEO4J_server_memory_pagecache_size=2G
+      - NEO4J_dbms_memory_transaction_total_max=3G
     volumes:
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/neo4j/data:/data
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/neo4j/logs:/logs
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/neo4j/import:/var/lib/neo4j/import
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/neo4j/plugins:/plugins
+      - ${HOST_APP_ROOT}/data/neo4j/data:/data
+      - ${HOST_APP_ROOT}/data/neo4j/logs:/logs
+      - ${HOST_APP_ROOT}/data/neo4j/import:/var/lib/neo4j/import
+      - ${HOST_APP_ROOT}/data/neo4j/plugins:/plugins
     networks:
       - graphmcp-net
     healthcheck:
@@ -34,11 +39,13 @@ services:
     image: qdrant/qdrant:latest
     container_name: graph-mcp-qdrant
     restart: unless-stopped
+    environment:
+      - TZ=Europe/Istanbul
     ports:
       - "127.0.0.1:6333:6333"
       - "127.0.0.1:6334:6334"
     volumes:
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/qdrant:/qdrant/storage
+      - ${HOST_APP_ROOT}/data/qdrant:/qdrant/storage
     networks:
       - graphmcp-net
     healthcheck:
@@ -52,10 +59,12 @@ services:
     image: redis:7-alpine
     container_name: graph-mcp-redis
     restart: unless-stopped
+    environment:
+      - TZ=Europe/Istanbul
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/redis:/data
+      - ${HOST_APP_ROOT}/data/redis:/data
     networks:
       - graphmcp-net
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
@@ -73,11 +82,12 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     environment:
-      POSTGRES_USER: graphmcp
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: graphmcp
+      - TZ=Europe/Istanbul
+      - POSTGRES_USER=graphmcp
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=graphmcp
     volumes:
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/postgres:/var/lib/postgresql/data
+      - ${HOST_APP_ROOT}/data/postgres:/var/lib/postgresql/data
     networks:
       - graphmcp-net
     healthcheck:
@@ -103,33 +113,34 @@ services:
     networks:
       - graphmcp-net
     environment:
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      QDRANT_URL: http://qdrant:6333
-      QDRANT_API_KEY: ""
-      REDIS_URL: redis://redis:6379
-      POSTGRES_DSN: postgresql://graphmcp:${POSTGRES_PASSWORD}@postgres:5432/graphmcp
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      COLLECTION_NAME: ${COLLECTION_NAME:-codebase}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-openai/text-embedding-3-small}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-      LOG_FILE: /app/data/graph-mcp.log
-      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
-      DEFAULT_COLLECTION: ${DEFAULT_COLLECTION:-WareLogisticcBYS}
-      ANALYSIS_MODEL: ${ANALYSIS_MODEL:-openai/gpt-4o-mini}
-      PROJECT_REGISTRY_PATH: /app/data/project_registry.json
+      - TZ=Europe/Istanbul
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_DSN=postgresql://graphmcp:${POSTGRES_PASSWORD}@postgres:5432/graphmcp
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - COLLECTION_NAME=${COLLECTION_NAME:-codebase}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-openai/text-embedding-3-small}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_FILE=/app/data/graph-mcp.log
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
+      - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-WareLogisticcBYS}
+      - ANALYSIS_MODEL=${ANALYSIS_MODEL:-openai/gpt-4o-mini}
+      - PROJECT_REGISTRY_PATH=/app/data/project_registry.json
       # OrbStack proxy'sini koru (dış API erişimi için) — ama NO_PROXY'deki
       # IPv6 CIDR'ı (fd07:b51a:cc66:f0::/64) httpx çökertiyor, temizlendi.
       # Docker iç servis hostname'leri de proxy'den muaf tutuldu.
-      NO_PROXY: "localhost,127.0.0.1,127.0.0.0/8,::1,192.168.0.0/16,10.0.0.0/8,qdrant,neo4j,redis,postgres,graph-mcp-qdrant,graph-mcp-neo4j,graph-mcp-redis,graph-mcp-postgres"
-      no_proxy: "localhost,127.0.0.1,127.0.0.0/8,::1,192.168.0.0/16,10.0.0.0/8,qdrant,neo4j,redis,postgres,graph-mcp-qdrant,graph-mcp-neo4j,graph-mcp-redis,graph-mcp-postgres"
+      - NO_PROXY=localhost,127.0.0.1,127.0.0.0/8,::1,192.168.0.0/16,10.0.0.0/8,qdrant,neo4j,redis,postgres,graph-mcp-qdrant,graph-mcp-neo4j,graph-mcp-redis,graph-mcp-postgres
+      - no_proxy=localhost,127.0.0.1,127.0.0.0/8,::1,192.168.0.0/16,10.0.0.0/8,qdrant,neo4j,redis,postgres,graph-mcp-qdrant,graph-mcp-neo4j,graph-mcp-redis,graph-mcp-postgres
     volumes:
-      - /Volumes/MacBook/RiderProjects:/projects:ro
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/src:/app/src
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/scripts:/app/scripts
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/graphmcp:/app/data
+      - ${HOST_PROJECTS_ROOT}:${CONTAINER_PROJECTS_ROOT}:ro
+      - ${HOST_APP_ROOT}/src:/app/src
+      - ${HOST_APP_ROOT}/scripts:/app/scripts
+      - ${HOST_APP_ROOT}/data/graphmcp:/app/data
     entrypoint: ["python3", "-m", "src.mcp_server"]
 
   # ── pgAdmin ──────────────────────────────────────────────────────────────
@@ -140,12 +151,13 @@ services:
     ports:
       - "127.0.0.1:5050:80"
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@graphmcp.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
-      PGADMIN_CONFIG_SERVER_MODE: "False"
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      - TZ=Europe/Istanbul
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:-admin@graphmcp.com}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD}
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
     volumes:
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/pgadmin:/var/lib/pgadmin
+      - ${HOST_APP_ROOT}/data/pgadmin:/var/lib/pgadmin
     networks:
       - graphmcp-net
     depends_on:
@@ -157,10 +169,12 @@ services:
     image: redis/redisinsight:latest
     container_name: graph-mcp-redisinsight
     restart: unless-stopped
+    environment:
+      - TZ=Europe/Istanbul
     ports:
       - "127.0.0.1:5540:5540"
     volumes:
-      - /Volumes/MacBook/RiderProjects/GraphRagMCP/data/redisinsight:/data
+      - ${HOST_APP_ROOT}/data/redisinsight:/data
     networks:
       - graphmcp-net
 

@@ -1,44 +1,18 @@
 """
 PreLLM Context Compressor — Conservative Token Optimizasyonu.
 
-Amaç:
-  Chunk'ları LLM'e göndermeden önce token boyutunu azaltmak.
-  Sadece GÜVENLİ, non-destructive işlemler yapılır:
-
-  ✅ Kaldırılan (güvenli):
-    - Ardışık boş satırlar (3+ → 1)
-    - Satır sonu boşlukları
-    - Uzun docstring/comment bloklarını kısalt (ilk 3 satır + "...")
-    - Tekrarlayan type hint satırları (Python overload)
-    - Dosya başındaki lisans/copyright bloğu
-
-  ❌ ASLA kaldırılmayan (semantik değer taşır):
-    - Import satırları (bağımlılık sinyali)
-    - Logic, condition, flow
-    - Side effect içeren satırlar
-    - External call'lar
-    - Return ifadeleri
-
 Neden conservative?
   Yanlış silinen bir satır sessiz hallucination üretir ve debug edilmesi
   çok zordur. Token kazancı %15-30 gibi daha mütevazı ama güvenli.
-
-Feature Flag:
-  COMPRESSOR_ENABLED env değişkeni ile açılıp kapatılabilir (varsayılan: true).
-  COMPRESSOR_MAX_RATIO: maksimum sıkıştırma oranı (varsayılan: 0.6 = %40 maks kısaltma)
 """
 
 from __future__ import annotations
 
-import os
 import re
 import logging
+from src.shared.config import config
 
 logger = logging.getLogger(__name__)
-
-_ENABLED = os.getenv("COMPRESSOR_ENABLED", "true").lower() != "false"
-# Chunk'ın bu orandan daha az karaktere indirilmemesi (güvenlik taban çizgisi)
-_MAX_RATIO = float(os.getenv("COMPRESSOR_MAX_RATIO", "0.6"))
 
 # Lisans/copyright bloğunu tespit eden pattern (dosya başı)
 _LICENSE_PATTERN = re.compile(
@@ -57,16 +31,8 @@ _DOCSTRING_PATTERN = re.compile(
 def compress(chunk: dict) -> dict:
     """
     Tek bir chunk'ı sıkıştırır. Orijinal chunk değiştirilmez; kopyası döner.
-    Hata durumunda orijinal chunk döner (fail-safe).
-
-    chunk dict alanları: code (veya content), language, ...
-
-    Dönen dict'te ek alanlar:
-      _original_chars: sıkıştırma öncesi karakter sayısı
-      _compressed_chars: sıkıştırma sonrası karakter sayısı
-      _compression_ratio: compressed/original oranı
     """
-    if not _ENABLED:
+    if not config.compressor_enabled:
         return chunk
 
     code_key = "code" if "code" in chunk else "content"
@@ -87,10 +53,10 @@ def compress(chunk: dict) -> dict:
     ratio = compressed_len / max(original_len, 1)
 
     # Güvenlik tabanı: orijinalin %60'ından aşağı inme
-    if ratio < _MAX_RATIO:
+    if ratio < config.compressor_max_ratio:
         logger.debug(
             "Compressor sıkıştırmayı geri aldı: %s (ratio %.2f < %.2f)",
-            chunk.get("name", "?"), ratio, _MAX_RATIO,
+            chunk.get("name", "?"), ratio, config.compressor_max_ratio,
         )
         compressed = original_text
         ratio = 1.0

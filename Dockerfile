@@ -6,7 +6,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# Timezone ayarı (Europe/Istanbul)
+ENV TZ=Europe/Istanbul
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Python paketlerini önce kopyala — layer cache'den yararlanır
 COPY requirements.txt .

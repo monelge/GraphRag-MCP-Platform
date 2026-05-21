@@ -1,5 +1,19 @@
 """Entry-point facade — Docker CMD ve MCP client config bu dosyayı kullanır."""
 
+import os
+import sys
+
+# ONNX Runtime ve diğer kütüphanelerin stdout'a gürültü basmasını engelle
+os.environ["ORT_LOGGING_LEVEL"] = "3"  # ERROR level
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Real stdout'u MCP transportu için sakla
+# Bazı kütüphaneler (onnxruntime, tree-sitter vb.) C-level stdout (FD 1) kullanabilir.
+# Python sys.stdout'u erkenden stderr'e yönlendirerek MCP protokolünü koruyoruz.
+_original_stdout = sys.stdout
+sys.stdout = sys.stderr
+
 from src.mcp.server import (
     _app_ctx,
     _control,
@@ -15,6 +29,7 @@ from src.mcp.tool_registry import (
     complete_task,
     compact_memory,
     create_agent_task,
+    execute_agent_task,
     explain_code,
     get_control_plane_stats,
     get_task_status,
@@ -51,6 +66,7 @@ __all__ = [
     "explain_code",
     "index_agent_docs",
     "search_agent_docs",
+    "execute_agent_task",
     "store_memory",
     "recall_memory",
     "compact_memory",
@@ -73,4 +89,6 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
+    # MCP server'ı başlatırken gerçek stdout'u geri veriyoruz
+    sys.stdout = _original_stdout
     app.run(transport="stdio")

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "graph-mcp": {
+      "command": "docker",
+      "args": [
+        "exec", "-i",
+        "-e", "DEFAULT_COLLECTION=GraphRagMCP",
+        "graph-mcp",
+        "python", "-m", "src.mcp_server"
+      ],
+      "trust": true
+    }
+  }
+}

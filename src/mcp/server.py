@@ -15,7 +15,7 @@ from src.control.observability.metrics import get_metrics
 from src.control.observability.tracer import PipelineTracer
 from src.execution.runners.command_runner import CommandRunner
 from src.execution.sandbox.runtime_manager import SandboxRuntimeManager
-from src.handlers import AppContext, ControlHandler, ExecutionHandler, IndexingHandler, MemoryHandler, RetrievalHandler
+from src.handlers import AppContext, ControlHandler, ExecutionHandler, IndexingHandler, MemoryHandler, RetrievalHandler, OrchestrationHandler
 from src.mcp.tool_registry import register_all_tools
 from src.retrieval.context.token_budget import TokenBudgetOptimizer
 from src.retrieval.ranking.deduplicator import SemanticDeduplicator
@@ -113,17 +113,21 @@ _retrieval = RetrievalHandler(_app_ctx)
 _memory = MemoryHandler(_app_ctx)
 _execution = ExecutionHandler(_app_ctx, retrieval=_retrieval)
 _control = ControlHandler(_app_ctx, indexing=_indexing)
+_orchestration = OrchestrationHandler(_app_ctx)
+
 object.__setattr__(_app_ctx, "retrieval_handler", _retrieval)
 object.__setattr__(_app_ctx, "indexing_handler", _indexing)
 object.__setattr__(_app_ctx, "memory_handler", _memory)
 object.__setattr__(_app_ctx, "execution_handler", _execution)
 object.__setattr__(_app_ctx, "control_handler", _control)
+object.__setattr__(_app_ctx, "orchestration_handler", _orchestration)
 _orchestrator.app_context = _app_ctx
 
 
 @asynccontextmanager
 async def _lifespan(server):
     logger.info("MCP server başlatılıyor", extra={"server": "graph-mcp"})
+    await _redis.connect()
     await _postgres.connect()
     await _neo4j.connect()
     try:

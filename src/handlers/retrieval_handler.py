@@ -5,6 +5,7 @@ import logging
 import os
 import time
 
+from src.shared.config import config
 logger = logging.getLogger(__name__)
 
 from src.control.models.guardrail import GuardrailError, RequestBudget, fail_fast_token
@@ -44,7 +45,7 @@ class RetrievalHandler:
         rewrite_query: bool | None = None,
     ) -> str:
         """Tam retrieval pipeline ile kod araması yapar."""
-        collection = collection or os.getenv("DEFAULT_COLLECTION", "codebase")
+        collection = collection or config.default_collection
         t0 = time.monotonic()
         budget = RequestBudget()
         query_type = classify_query(query)
@@ -105,13 +106,13 @@ class RetrievalHandler:
                 effective_query = query
 
         if query_type in ("factual_doc", "config_lookup"):
-            searcher = LocalSearcher(collection=collection)
+            searcher = LocalSearcher(collection=collection, redis_store=self.ctx.redis)
             search_mode = "local"
         elif query_type == "broad_summary":
-            searcher = GlobalSearcher(collection=collection)
+            searcher = GlobalSearcher(collection=collection, redis_store=self.ctx.redis)
             search_mode = "global"
         else:
-            searcher = HybridSearcher(collection=collection)
+            searcher = HybridSearcher(collection=collection, redis_store=self.ctx.redis)
             search_mode = "hybrid"
 
         with tracer.step("retrieval"):
@@ -145,15 +146,18 @@ class RetrievalHandler:
             tracer.record("retrieval", item_count=len(candidates))
 
         if not candidates:
-            await self.ctx.postgres.log_retrieval(
-                collection=collection,
-                redacted_query=query[:80],
-                query_type=query_type,
-                top_k=top_k,
-                hit_count=0,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                answerability_fail=True,
-            )
+            try:
+                await self.ctx.postgres.log_retrieval(
+                    collection=collection,
+                    redacted_query=query[:80],
+                    query_type=query_type,
+                    top_k=top_k,
+                    hit_count=0,
+                    latency_ms=int((time.monotonic() - t0) * 1000),
+                    answerability_fail=True,
+                )
+            except Exception as e:
+                logger.debug("Postgres log_retrieval başarısız: %s", e)
             return "🔍 Sorguya uygun kod bloğu bulunamadı."
 
         expander = GraphExpander(self.ctx.neo4j)
@@ -222,18 +226,24 @@ class RetrievalHandler:
             header += f"\n> ⚠️ {assessment.reason}"
 
         if self.ctx.audit_logger:
-            await self.ctx.audit_logger.log(
-                "retrieval_request",
-                collection=collection,
-                summary=f"query_type={query_type} top_k={top_k} hits={len(final_chunks)}",
-            )
+            try:
+                await self.ctx.audit_logger.log(
+                    "retrieval_request",
+                    collection=collection,
+                    summary=f"query_type={query_type} top_k={top_k} hits={len(final_chunks)}",
+                )
+            except Exception as e:
+                logger.debug("Audit log başarısız: %s", e)
         if self.ctx.metrics:
-            self.ctx.metrics.record_retrieval(
-                collection,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                hit_count=len(final_chunks),
-                token_count=total_chars // 4,
-            )
+            try:
+                self.ctx.metrics.record_retrieval(
+                    collection,
+                    latency_ms=int((time.monotonic() - t0) * 1000),
+                    hit_count=len(final_chunks),
+                    token_count=total_chars // 4,
+                )
+            except Exception as e:
+                logger.debug("Metrics record başarısız: %s", e)
 
         output = [header + "\n"]
         for result in final_chunks:
@@ -250,28 +260,31 @@ class RetrievalHandler:
         await self.ctx.redis.set_retrieval(collection, query, result_text)
         latency_ms = int((time.monotonic() - t0) * 1000)
         logger.info("retrieval_log yazılıyor (normal), pool=%s", bool(self.ctx.postgres._pool))
-        await self.ctx.postgres.log_retrieval(
-            collection=collection,
-            redacted_query=query[:80],
-            query_type=query_type,
-            top_k=top_k,
-            hit_count=len(final_chunks),
-            top1_score=assessment.top1_score,
-            latency_ms=latency_ms,
-            rerank_latency_ms=rerank_ms,
-            token_usage=total_chars // 4,
-            cache_hit=False,
-            answerability_fail=assessment.is_failure,
-        )
+        try:
+            await self.ctx.postgres.log_retrieval(
+                collection=collection,
+                redacted_query=query[:80],
+                query_type=query_type,
+                top_k=top_k,
+                hit_count=len(final_chunks),
+                top1_score=assessment.top1_score,
+                latency_ms=latency_ms,
+                rerank_latency_ms=rerank_ms,
+                token_usage=total_chars // 4,
+                cache_hit=False,
+                answerability_fail=assessment.is_failure,
+            )
+        except Exception as e:
+            logger.debug("Final log_retrieval başarısız: %s", e)
         return result_text
 
     async def explain_code(self, query: str, collection: str = "", top_k: int = 5) -> str:
         """Kod bloklarını hibrit arama + LLM analizi ile açıklar."""
         t0 = time.monotonic()
-        collection = collection or os.getenv("DEFAULT_COLLECTION", "codebase")
+        collection = collection or config.default_collection
         query_type = classify_query(query)
 
-        searcher = HybridSearcher(collection=collection)
+        searcher = HybridSearcher(collection=collection, redis_store=self.ctx.redis)
         candidates = await searcher.search(
             query,
             top_k=top_k * 2,
@@ -279,15 +292,18 @@ class RetrievalHandler:
             query_filter=CODE_ONLY_FILTER,
         )
         if not candidates:
-            await self.ctx.postgres.log_retrieval(
-                collection=collection,
-                redacted_query=query[:80],
-                query_type=query_type,
-                top_k=top_k,
-                hit_count=0,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                answerability_fail=True,
-            )
+            try:
+                await self.ctx.postgres.log_retrieval(
+                    collection=collection,
+                    redacted_query=query[:80],
+                    query_type=query_type,
+                    top_k=top_k,
+                    hit_count=0,
+                    latency_ms=int((time.monotonic() - t0) * 1000),
+                    answerability_fail=True,
+                )
+            except Exception as e:
+                logger.debug("Postgres log_retrieval başarısız: %s", e)
             return "🔍 Sorguya uygun kod bloğu bulunamadı."
 
         reranked = self.ctx.reranker.rerank(query, candidates, top_n=top_k)
@@ -412,11 +428,11 @@ class RetrievalHandler:
     ) -> str:
         """Repo summary chunk'ları üzerinden mimari arama yapar."""
         t0 = time.monotonic()
-        collection = collection or os.getenv("DEFAULT_COLLECTION", "codebase")
+        collection = collection or config.default_collection
         architecture_filter = QFilter(
             must=[QFC(key="source_type", match=QMV(value="repo_summary"))]
         )
-        searcher = HybridSearcher(collection=collection)
+        searcher = HybridSearcher(collection=collection, redis_store=self.ctx.redis)
         results = await searcher.search(
             query,
             top_k=top_k,

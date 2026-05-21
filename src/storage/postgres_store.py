@@ -134,6 +134,22 @@ _MIGRATIONS = [
 ]
 
 
+def lazy_connect(func):
+    import functools
+
+    @functools.wraps(func)
+    async def wrapper(self, *args, **kwargs):
+        if not self._pool:
+            try:
+                await self.connect()
+            except Exception as exc:
+                logger.debug("Lazy connect failed: %s", exc)
+                return None
+        return await func(self, *args, **kwargs)
+
+    return wrapper
+
+
 class PostgresStore:
     """Privacy-safe loglama ve task/checkpoint saklama için PostgreSQL store."""
 
@@ -146,6 +162,8 @@ class PostgresStore:
             logger.warning(
                 "asyncpg paketi yüklenmedi, PostgreSQL desteği devre dışı kalacak. 'asyncpg' gereksinimini kontrol edin."
             )
+            return
+        if self._pool:
             return
         try:
             self._pool = await asyncpg.create_pool(
@@ -200,6 +218,7 @@ class PostgresStore:
     def _hash_user_id(user_id: str = None) -> str:
         return sha256_hash(user_id) if user_id else None
 
+    @lazy_connect
     async def log_retrieval(
         self,
         collection: str,
@@ -215,9 +234,6 @@ class PostgresStore:
         answerability_fail: bool = False,
         user_id: str = None,
     ) -> None:
-        if not self._pool:
-            logger.debug("PostgreSQL pool yok, retrieval_log atlanıyor")
-            return
         try:
             async with self._pool.acquire() as conn:
                 await conn.execute(
@@ -249,6 +265,7 @@ class PostgresStore:
         if self._pool:
             await self._pool.close()
 
+    @lazy_connect
     async def log_llm_usage(
         self,
         model: str,
@@ -259,9 +276,7 @@ class PostgresStore:
         task_id: str = None,
         node_name: str = None,
     ) -> None:
-        """LLM çağrısının token kullanımını model_usage_logs tablosuna yazar."""
-        if not self._pool:
-            return
+        """LLM çağrılarının token kullanımını model_usage_logs tablosuna yazar."""
         try:
             async with self._pool.acquire() as conn:
                 await conn.execute(
@@ -282,6 +297,7 @@ class PostgresStore:
         except Exception as _exc:
             logger.debug("DB write hatası: %s", _exc)
 
+    @lazy_connect
     async def log_audit_event(
         self,
         event_type: str,
@@ -291,9 +307,6 @@ class PostgresStore:
         metadata: dict | None = None,
     ) -> None:
         """Audit olaylarını privacy-safe biçimde audit_events tablosuna yazar."""
-        if not self._pool:
-            logger.debug("PostgreSQL pool yok, audit_event atlanıyor")
-            return
         try:
             async with self._pool.acquire() as conn:
                 await conn.execute(
@@ -311,10 +324,9 @@ class PostgresStore:
         except Exception as exc:
             logger.debug("audit_event yazma hatası: %s", exc)
 
+    @lazy_connect
     async def get_llm_usage_stats(self, days: int = 7) -> list[dict]:
         """Son N günün model bazlı token özetini döndürür."""
-        if not self._pool:
-            return []
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
@@ -337,10 +349,9 @@ class PostgresStore:
         except Exception:
             return []
 
+    @lazy_connect
     async def get_retrieval_stats(self, days: int = 7) -> list[dict]:
         """Son N günün collection bazlı retrieval özetini döndürür."""
-        if not self._pool:
-            return []
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
@@ -365,10 +376,9 @@ class PostgresStore:
         except Exception:
             return []
 
+    @lazy_connect
     async def get_audit_stats(self, days: int = 7) -> dict:
         """Son N günün event_type bazlı audit özeti ile en son 5 olayı döndürür."""
-        if not self._pool:
-            return {"summary": [], "recent": []}
         try:
             async with self._pool.acquire() as conn:
                 # Event tipine göre sayım

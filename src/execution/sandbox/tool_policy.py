@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Komut allowlist ve bash güvenlik bayraklarını merkezi yöneten politika modülü."""
 
-import os
+from src.shared.config import config
 
 _BASE_ALLOWED_EXECUTABLES = frozenset(
     {
@@ -14,9 +14,7 @@ _BASE_ALLOWED_EXECUTABLES = frozenset(
         "/usr/bin/bash",
     }
 )
-_EXTRA_ALLOWED_EXECUTABLES = frozenset(
-    item.strip() for item in os.getenv("TOOL_POLICY_EXTRA_ALLOWED", "").split(";") if item.strip()
-)
+_EXTRA_ALLOWED_EXECUTABLES = frozenset(config.tool_policy_extra_allowed)
 ALLOWED_EXECUTABLES: frozenset[str] = frozenset(set(_BASE_ALLOWED_EXECUTABLES) | set(_EXTRA_ALLOWED_EXECUTABLES))
 BLOCKED_BASH_FLAGS: frozenset[str] = frozenset({"-c", "-lc"})
 

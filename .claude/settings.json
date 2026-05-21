@@ -1,4 +1,16 @@
 {
+  "mcpServers": {
+    "graph-mcp": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "exec", "-i",
+        "-e", "DEFAULT_COLLECTION=Vendoris",
+        "graph-mcp",
+        "python", "-m", "src.mcp_server"
+      ]
+    }
+  },
   "permissions": {
     "allow": [
       "mcp__graph-mcp__search_code",
@@ -12,7 +24,11 @@
       "mcp__graph-mcp__list_agent_tasks",
       "mcp__graph-mcp__list_projects",
       "mcp__graph-mcp__get_control_plane_stats",
-      "mcp__graph-mcp__get_task_status"
+      "mcp__graph-mcp__get_task_status",
+      "mcp__graph-mcp__execute_agent_task",
+      "mcp__graph-mcp__index_project",
+      "mcp__graph-mcp__summarize_repository",
+      "mcp__graph-mcp__analyze_change_impact"
     ]
   }
 }

@@ -10,13 +10,17 @@ from src.retrieval.search.hybrid_search import HybridSearcher
 class GlobalSearcher:
     """Sadece repo_summary kaynaklarını döndüren global arayıcı."""
 
-    def __init__(self, collection: str = "codebase", top_k_fetch: int = 20):
-        self.searcher = HybridSearcher(collection=collection, top_k_fetch=top_k_fetch)
+    def __init__(self, collection: str = "codebase", top_k_fetch: int = 20, redis_store=None):
+        self.searcher = HybridSearcher(collection=collection, top_k_fetch=top_k_fetch, redis_store=redis_store)
 
     async def search(self, query: str, collection: str = "", top_k: int = 6, query_filter=None) -> list[dict]:
         """Repository summary chunk'ları üzerinde mimari arama yapar."""
         if collection and collection != self.searcher.store.collection:
-            self.searcher = HybridSearcher(collection=collection, top_k_fetch=max(top_k * 3, 18))
+            self.searcher = HybridSearcher(
+                collection=collection, 
+                top_k_fetch=max(top_k * 3, 18),
+                redis_store=self.searcher.dense._redis
+            )
         query_filter = Filter(
             must=[FieldCondition(key="source_type", match=MatchValue(value="repo_summary"))]
         )

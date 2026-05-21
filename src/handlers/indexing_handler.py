@@ -19,6 +19,7 @@ from rich.progress import (
 )
 
 from src.handlers.context import AppContext
+from src.shared.config import config
 from src.indexing.chunkers import secret_scanner
 from src.indexing.pipelines.project_intelligence import sync_project_intelligence
 from src.retrieval.context.context_builder import ContextBuilder
@@ -170,6 +171,12 @@ class IndexingHandler:
 
     async def index_project(self, project_path: str, collection: str = "", batch_size: int = 32) -> str:
         """Kaynak kodu AST, graph ve vektör katmanlarına indeksler."""
+        path_obj = Path(project_path).resolve()
+        if not path_obj.exists():
+            return f"❌ Proje yolu bulunamadı: {project_path}. (Container içinde /projects/ altında olduğundan emin olun)"
+        if not path_obj.is_dir():
+            return f"❌ Belirtilen yol bir dizin değil: {project_path}"
+
         if not collection:
             collection = self.project_collection_name(project_path)
 
@@ -178,11 +185,15 @@ class IndexingHandler:
         already_indexed = await store.get_indexed_file_paths()
         files = [
             str(path)
-            for path in Path(project_path).rglob("*")
+            for path in path_obj.rglob("*")
             if path.suffix in self.INDEX_SOURCE_EXTENSIONS
             and ".git" not in path.parts
             and not self.EXCLUDE_DIRS.intersection(path.parts)
         ]
+        
+        if not files:
+            return f"⚠️ İndekslenecek kaynak dosyası bulunamadı (.py, .ts, .tsx, .cs). Yol: {project_path}"
+
         remaining_files = [file_path for file_path in files if file_path not in already_indexed]
 
         if not remaining_files:
@@ -206,74 +217,80 @@ class IndexingHandler:
             )
         )
 
-        all_chunks = []
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[cyan]AST parçalama[/]"),
-            MofNCompleteColumn(),
-            BarColumn(),
-            TimeElapsedColumn(),
-            console=console,
-            transient=True,
-        ) as progress:
-            task = progress.add_task("chunking", total=len(remaining_files))
-            for file_path in remaining_files:
-                all_chunks.extend(self._get_ast().chunk_file(file_path))
-                progress.advance(task)
+        indexed_count = 0
+        total_chunks_processed = 0
+        
+        # Dosyaları gruplar halinde işle (Bellek ve performans optimizasyonu)
+        file_batch_size = 50
+        for i in range(0, len(remaining_files), file_batch_size):
+            file_batch = remaining_files[i : i + file_batch_size]
+            batch_chunks = []
+            
+            # 1. AST Parçalama
+            for file_path in file_batch:
+                try:
+                    batch_chunks.extend(self._get_ast().chunk_file(file_path))
+                except Exception as exc:
+                    logger.error("Dosya parçalanamadı (%s): %s", file_path, exc)
+            
+            if not batch_chunks:
+                continue
 
-        if not all_chunks:
-            console.print("[yellow]⚠ İndekslenecek kod bloğu bulunamadı.[/]")
-            return "⚠️ İndekslenecek kaynak dosyası bulunamadı."
+            # 2. Graph İlişkileri (Neo4j)
+            try:
+                relations = self._get_graph_extractor().extract_relationships(batch_chunks)
+                await self.ctx.neo4j.upsert_nodes_and_relationships(relations, collection=collection)
+            except Exception as exc:
+                logger.error("Graph ilişkileri işlenemedi (batch %s): %s", i // file_batch_size, exc)
 
-        with console.status("[bold magenta]Graph ilişkileri Neo4j'ye işleniyor..."):
-            relations = self._get_graph_extractor().extract_relationships(all_chunks)
-            await self.ctx.neo4j.upsert_nodes_and_relationships(relations, collection=collection)
-
-        indexed = 0
-        total_chunks = len(all_chunks)
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[bold green]Embedding + Qdrant Kayıt[/]"),
-            MofNCompleteColumn(),
-            BarColumn(bar_width=40),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("embedding", total=total_chunks)
-            for index in range(0, total_chunks, batch_size):
-                batch = all_chunks[index : index + batch_size]
+            # 3. Embedding ve Vektör Kayıt (Qdrant)
+            # Alt batch'lere böl (Embedding model limitleri için)
+            for j in range(0, len(batch_chunks), batch_size):
+                chunk_batch = batch_chunks[j : j + batch_size]
                 safe_batch = []
-                for chunk in batch:
+                for chunk in chunk_batch:
                     scan = secret_scanner.scan(chunk.code)
-                    if scan.should_skip:
-                        continue
-                    chunk.code = scan.redacted_text
-                    safe_batch.append(chunk)
-
+                    if not scan.should_skip:
+                        chunk.code = scan.redacted_text
+                        safe_batch.append(chunk)
+                
                 if not safe_batch:
-                    progress.advance(task, len(batch))
                     continue
 
-                texts = [
-                    f"# {chunk.name}\n# Tür: {chunk.chunk_type} | Dosya: {chunk.file_path}\n{chunk.code}"
-                    for chunk in safe_batch
-                ]
-                dense_vecs = await self._get_dense().embed_batch(texts)
-                sparse_vecs = list(self._get_sparse().embed_batch(texts))
-                await store.upsert_chunks(safe_batch, dense_vecs, sparse_vecs)
-                indexed += len(safe_batch)
-                progress.advance(task, len(batch))
+                try:
+                    texts = [
+                        f"# {c.name}\n# Tür: {c.chunk_type} | Dosya: {c.file_path}\n{c.code}"
+                        for c in safe_batch
+                    ]
+                    dense_vecs = await self._get_dense().embed_batch(texts)
+                    sparse_vecs = list(self._get_sparse().embed_batch(texts))
+                    await store.upsert_chunks(safe_batch, dense_vecs, sparse_vecs)
+                    indexed_count += len(safe_batch)
+                except Exception as exc:
+                    logger.error("Embedding/Qdrant hatası (batch %s): %s", i // file_batch_size, exc)
+            
+            total_chunks_processed += len(batch_chunks)
+            logger.info("Batch tamamlandı: %s/%s dosya", i + len(file_batch), len(remaining_files))
+
+        if total_chunks_processed == 0:
+            return "⚠️ İndekslenecek kaynak dosyası bulunamadı veya işlenemedi."
+
+        # Knowledge Plane V2: Final Analizler
+        try:
+            with console.status("[bold magenta]Mimari analizler (PageRank & Repo Map) güncelleniyor..."):
+                await self.ctx.neo4j.run_pagerank_analysis(collection)
+                await self.sync_project_foundation(project_path, collection)
+        except Exception as exc:
+            logger.warning("Mimari analiz güncellenemedi: %s", exc)
 
         console.print(
             Panel(
                 f"[bold green]✓ İndeksleme tamamlandı[/]\n"
-                f"[dim]{indexed} chunk  •  Graph & Vektör hazır  •  koleksiyon: {collection}[/]",
+                f"[dim]{indexed_count} kod bloğu  •  Graph & Vektör hazır  •  koleksiyon: {collection}[/]",
                 border_style="green",
             )
         )
-        await self.sync_project_foundation(project_path, collection)
-        return f"✅ {indexed} kod bloğu ve Graph ilişkileri '{collection}' koleksiyonuna indekslendi."
+        return f"✅ {indexed_count} kod bloğu ve Graph ilişkileri '{collection}' koleksiyonuna indekslendi."
 
     async def incremental_index_project(
         self,
@@ -483,7 +500,7 @@ class IndexingHandler:
         doc_priority: str | None = None,
     ) -> str:
         """Sadece agent_doc chunk'larında hibrit arama yapar."""
-        collection = collection or os.getenv("DEFAULT_COLLECTION", "codebase")
+        collection = collection or config.default_collection
         cache_key = f"{query}|layer={layer}|priority={doc_priority}"
         t0 = time.monotonic()
         cached = await self.ctx.redis.get_retrieval(collection, cache_key)

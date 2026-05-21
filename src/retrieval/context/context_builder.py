@@ -9,21 +9,10 @@ Değişiklikler (refactor):
   3. Tam dosya context'i yalnızca: architecture_analysis, broad_summary, dependency tracing
   4. Duplicate chunk içermez — SemanticDeduplicator ile birlikte çalışır.
   5. Düşük relevance chunk'ları otomatik elenir (MIN_SCORE eşiği).
-
-Neden bu sıra?
-  - retrieval_score: Qdrant RRF skoru — ham semantik/BM25 sinyal
-  - rerank_score: yerel keyword reranker — bağlamsal alaka
-  - graph_centrality: Neo4j'deki bağlantı yoğunluğu — mimari önem
-  - recency_score: yakın zamanda değişen dosyalar daha güncel bilgi içerir
 """
 
 from __future__ import annotations
-
-# ── Sabitler ────────────────────────────────────────────────────────────────
-_CHARS_PER_TOKEN = 4
-_DEFAULT_TOKEN_BUDGET = 1800   # factual_doc varsayılanı — TokenBudgetOptimizer override eder
-_MIN_FINAL_SCORE = 0.05        # Bu eşiğin altındaki chunk'lar her zaman elenir
-_MAX_CHUNKS = 8                # Prompt overload önlemi
+from src.shared.config import config
 
 # Chunk tipi → öncelik puanı (yüksek = önce seç)
 _TYPE_PRIORITY: dict[str, int] = {
@@ -53,11 +42,12 @@ def compute_final_score(chunk: dict) -> float:
     chunk_type  = (chunk.get("type") or chunk.get("chunk_type") or "").lower()
     type_bonus  = _TYPE_PRIORITY.get(chunk_type, 0) / 100.0
 
+    w = config.context_score_weights
     raw = (
-        retrieval  * 0.51   # 0.45 → 0.51 (recency azaltıldığı için dengelendi)
-        + rerank   * 0.30
-        + centrality * 0.15
-        + recency  * 0.04   # 0.10 → 0.04: kod RAG'da yeni kod her zaman daha iyi değil
+        retrieval    * w["retrieval"]
+        + rerank     * w["rerank"]
+        + centrality * w["centrality"]
+        + recency    * w["recency"]
         + type_bonus
     )
     return round(min(raw, 1.0), 4)
@@ -69,8 +59,8 @@ class ContextBuilder:
     Dışarıdan sadece `build()` metodu kullanılır.
     """
 
-    def __init__(self, token_budget: int = _DEFAULT_TOKEN_BUDGET, query_type: str = "factual_doc"):
-        self._budget = token_budget * _CHARS_PER_TOKEN
+    def __init__(self, token_budget: int | None = None, query_type: str = "factual_doc"):
+        self._budget = (token_budget or config.default_token_budget) * config.context_chars_per_token
         self._query_type = query_type
 
     def build(self, chunks: list[dict]) -> list[dict]:
@@ -101,7 +91,7 @@ class ContextBuilder:
                 enriched = [{**c, "final_score": compute_final_score(c)} for c in chunks]
 
         # 3. MIN_SCORE filtresi
-        above_threshold = [c for c in enriched if c["final_score"] >= _MIN_FINAL_SCORE]
+        above_threshold = [c for c in enriched if c["final_score"] >= config.min_final_score]
         if not above_threshold:
             above_threshold = enriched  # Hepsi düşükse yine de top1'i ver
 
@@ -114,7 +104,7 @@ class ContextBuilder:
         seen_ids: set[str] = set()
 
         for chunk in above_threshold:
-            if len(selected) >= _MAX_CHUNKS:
+            if len(selected) >= config.max_context_chunks:
                 break
 
             chunk_id = chunk.get("chunk_id") or id(chunk)

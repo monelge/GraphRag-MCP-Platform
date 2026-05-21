@@ -16,6 +16,7 @@ _retrieval = None
 _memory = None
 _execution = None
 _control = None
+_orchestration = None
 
 
 def _tool(func):
@@ -45,8 +46,8 @@ def _tool(func):
     return wrapper
 
 
-def set_runtime(app, ctx, indexing, retrieval, memory, execution, control) -> None:
-    global _app, _ctx, _indexing, _retrieval, _memory, _execution, _control
+def set_runtime(app, ctx, indexing, retrieval, memory, execution, control, orchestration) -> None:
+    global _app, _ctx, _indexing, _retrieval, _memory, _execution, _control, _orchestration
     _app = app
     _ctx = ctx
     _indexing = indexing
@@ -54,10 +55,11 @@ def set_runtime(app, ctx, indexing, retrieval, memory, execution, control) -> No
     _memory = memory
     _execution = execution
     _control = control
+    _orchestration = orchestration
 
 
 def register_all_tools(app, ctx) -> None:
-    set_runtime(app, ctx, ctx.indexing_handler, ctx.retrieval_handler, ctx.memory_handler, ctx.execution_handler, ctx.control_handler)
+    set_runtime(app, ctx, ctx.indexing_handler, ctx.retrieval_handler, ctx.memory_handler, ctx.execution_handler, ctx.control_handler, ctx.orchestration_handler)
     for func in TOOL_FUNCTIONS:
         _tool(func)
 
@@ -172,32 +174,33 @@ async def search_decisions(query: str, collection: str = "", top_k: int = 5) -> 
     return await _memory.search_decisions(query, collection, top_k)
 
 
+async def execute_agent_task(goal: str, project_path: str, collection: str = "") -> str:
+    """
+    Kritik: Tüm V2 Plane'lerini (Knowledge, Memory, Agent, Execution, Control) kullanarak
+    verilen hedefi otonom bir şekilde gerçekleştiren ana orkestrasyon aracıdır.
+    """
+    return await _orchestration.execute_agent_task(goal, project_path, collection)
+
+
 TOOL_FUNCTIONS = [
+    execute_agent_task,  # Ana Giriş Noktası
     index_project,
-    incremental_index_project,
     search_code,
     explain_code,
-    index_agent_docs,
+    search_repo_architecture,
+    analyze_change_impact,
     search_agent_docs,
     store_memory,
     recall_memory,
     compact_memory,
-    create_agent_task,
-    get_task_status,
-    approve_task_step,
-    complete_task,
-    resume_task,
-    list_agent_tasks,
-    get_project_state,
-    get_active_phase,
-    run_verification_plan,
-    run_retrieval_eval,
-    get_control_plane_stats,
-    register_project,
-    list_projects,
-    summarize_repository,
-    search_repo_architecture,
-    analyze_change_impact,
     store_decision_memory,
     search_decisions,
+    get_task_status,
+    complete_task,
+    list_agent_tasks,
+    get_project_state,
+    run_verification_plan,
+    get_control_plane_stats,
+    list_projects,
+    summarize_repository,
 ]

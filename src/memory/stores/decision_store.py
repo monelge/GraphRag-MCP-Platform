@@ -18,10 +18,18 @@ class DecisionStore:
         return await self.episodic_store.store_memory(entry)
 
     async def search_decisions(self, query: str, collection: str = "", top_k: int = 5) -> list[dict]:
-        """Decision layer filtreli arama yapar."""
-        return await self.episodic_store.search_memory(
-            query,
-            memory_layer="decision",
-            collection=collection or None,
-            top_k=top_k,
-        )
+        """Decision ve episodic layer filtreli arama yapar (öğrenilen dersleri de kapsar)."""
+        from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+        
+        # Sadece karar (decision) değil, başarılı adımlardan öğrenilen tecrübeleri (episodic) de dahil et.
+        must_conditions = [
+            FieldCondition(key="source_type", match=MatchValue(value="episodic_memory")),
+            FieldCondition(key="status", match=MatchValue(value="active")),
+            FieldCondition(key="memory_layer", match=MatchAny(any=["decision", "episodic"]))
+        ]
+        if collection:
+            must_conditions.append(FieldCondition(key="collection", match=MatchValue(value=collection)))
+
+        from src.retrieval.search.hybrid_search import HybridSearcher
+        searcher = HybridSearcher(collection="episodic_memory")
+        return await searcher.search(query, top_k=top_k, query_filter=Filter(must=must_conditions))

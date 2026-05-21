@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
-import time
-from dataclasses import asdict, dataclass, field
+import logging
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Dict, List, Optional
 
+from src.shared.config import config
 
-_REGISTRY_PATH = Path(os.getenv("PROJECT_REGISTRY_PATH", "/app/data/project_registry.json"))
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -15,43 +16,47 @@ class ProjectProfile:
     project_name: str
     collection: str
     project_path: str
-    languages: list[str] = field(default_factory=list)
-    frameworks: list[str] = field(default_factory=list)
-    package_managers: list[str] = field(default_factory=list)
-    module_roots: list[str] = field(default_factory=list)
-    entrypoints: list[str] = field(default_factory=list)
-    summary: str = ""
-    indexed_at: float = 0.0
+    languages: List[str]
+    frameworks: List[str]
+    package_managers: List[str]
+    module_roots: List[str]
+    entrypoints: List[str]
+    summary: str
+    indexed_at: float
 
 
 class ProjectRegistry:
-    def __init__(self, path: Path | None = None):
-        self.path = path or _REGISTRY_PATH
+    def __init__(self, path: Optional[str] = None):
+        self.path = Path(path or config.project_registry_path)
+        self._profiles: Dict[str, ProjectProfile] = {}
+        self._load()
 
-    def _load(self) -> dict[str, dict]:
+    def _load(self):
         if not self.path.exists():
-            return {}
+            return
         try:
-            return json.loads(self.path.read_text())
-        except Exception:
-            return {}
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for coll, profile_data in data.items():
+                    self._profiles[coll] = ProjectProfile(**profile_data)
+        except Exception as exc:
+            logger.error("ProjectRegistry yüklenemedi: %s", exc)
 
-    def _save(self, data: dict[str, dict]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, ensure_ascii=True, indent=2))
+    def _save(self):
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            data = {coll: asdict(p) for coll, p in self._profiles.items()}
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            logger.error("ProjectRegistry kaydedilemedi: %s", exc)
 
-    def upsert(self, profile: ProjectProfile) -> None:
-        data = self._load()
-        payload = asdict(profile)
-        payload["indexed_at"] = profile.indexed_at or time.time()
-        data[profile.collection] = payload
-        self._save(data)
+    def upsert(self, profile: ProjectProfile):
+        self._profiles[profile.collection] = profile
+        self._save()
 
-    def list_profiles(self) -> list[ProjectProfile]:
-        data = self._load()
-        return [ProjectProfile(**item) for item in data.values()]
+    def get_profile(self, collection: str) -> Optional[ProjectProfile]:
+        return self._profiles.get(collection)
 
-    def get(self, collection: str) -> ProjectProfile | None:
-        data = self._load()
-        raw = data.get(collection)
-        return ProjectProfile(**raw) if raw else None
+    def list_profiles(self) -> List[ProjectProfile]:
+        return list(self._profiles.values())

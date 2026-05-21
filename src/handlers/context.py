@@ -52,3 +52,4 @@ class AppContext:
     audit_logger: Optional[AuditLogger] = None
     metrics: Optional[MetricsCollector] = None
     budget_manager: Optional[BudgetManager] = None
+    orchestration_handler: Optional[object] = None
