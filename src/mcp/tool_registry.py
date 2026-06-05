@@ -20,6 +20,26 @@ _orchestration = None
 _analysis = None
 
 
+def _resolve_collection(name: str) -> str:
+    """
+    Collection adını registry'ye bakarak doğru büyük/küçük harf ile döner.
+    Client 'WareLogisticcBys' gönderirse 'WareLogisticcBYS' olarak düzeltir.
+    """
+    if not name or not _ctx:
+        return name
+    try:
+        registry = getattr(_ctx, "registry", None)
+        if registry:
+            profiles = registry.list_profiles()
+            name_lower = name.lower()
+            for p in profiles:
+                if p.collection.lower() == name_lower or p.project_name.lower() == name_lower:
+                    return p.collection
+    except Exception:
+        pass
+    return name
+
+
 def _tool(func):
     @ _app.tool()
     @functools.wraps(func)
@@ -30,7 +50,11 @@ def _tool(func):
             await _ctx.postgres.connect()
             if _ctx.audit_logger:
                 _ctx.audit_logger.set_postgres(_ctx.postgres)
-        
+
+        # Collection adını otomatik düzelt (case-insensitive → kayıtlı doğru isme)
+        if "collection" in kwargs and kwargs["collection"]:
+            kwargs["collection"] = _resolve_collection(kwargs["collection"])
+
         # Get or generate correlation/task ID
         task_id = kwargs.get("task_id") or kwargs.get("collection")
         corr_id = str(task_id) if task_id else uuid.uuid4().hex[:8]

@@ -91,6 +91,15 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    # MCP server'ı başlatırken gerçek stdout'u geri veriyoruz
     sys.stdout = _original_stdout
-    app.run(transport="stdio")
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
+
+    if transport == "sse":
+        import uvicorn
+        host = os.environ.get("UVICORN_HOST", "0.0.0.0")
+        port = int(os.environ.get("UVICORN_PORT", "8000"))
+        # FastMCP 1.6.x — sse_app() ASGI uygulamasini dondurur
+        sse_app = app.sse_app()
+        uvicorn.run(sse_app, host=host, port=port, log_level="info")
+    else:
+        app.run(transport="stdio")

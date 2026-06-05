@@ -110,6 +110,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    ports:
+      - "0.0.0.0:8000:8000"
     networks:
       - graphmcp-net
     environment:
@@ -130,6 +132,9 @@ services:
       - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
       - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-WareLogisticcBYS}
       - ANALYSIS_MODEL=${ANALYSIS_MODEL:-openai/gpt-4o-mini}
+      - MCP_TRANSPORT=sse
+      - UVICORN_HOST=0.0.0.0
+      - UVICORN_PORT=8000
       - PROJECT_REGISTRY_PATH=/app/data/project_registry.json
       # OrbStack proxy'sini koru (dış API erişimi için) — ama NO_PROXY'deki
       # IPv6 CIDR'ı (fd07:b51a:cc66:f0::/64) httpx çökertiyor, temizlendi.
@@ -223,6 +228,29 @@ services:
       - ${HOST_APP_ROOT}/data/redisinsight:/data
     networks:
       - graphmcp-net
+
+  # ── Real-Time Log Viewer Dashboard ──────────────────────────────────────────
+  log-viewer:
+    build: .
+    container_name: graph-mcp-log-viewer
+    restart: unless-stopped
+    ports:
+      - "8080:8001"
+    environment:
+      - TZ=Europe/Istanbul
+      - LOG_FILE=/app/data/graph-mcp.log
+    volumes:
+      - ${HOST_APP_ROOT}/src:/app/src
+      - ${HOST_APP_ROOT}/data/graphmcp:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - graphmcp-net
+    entrypoint: ["python3", "-m", "src.control.log_viewer"]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8001'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 networks:
   graphmcp-net:
