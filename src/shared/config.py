@@ -27,8 +27,9 @@ class AppConfig:
     openai_model: str
     embedding_model: str
     embedding_dim: int
-    analysis_model: str
-    reasoning_model: str
+    budget_model: str       # Ücretsiz/ucuz — query rewrite, HyDE, memory compaction
+    analysis_model: str     # Orta — explain, summarize, test/security önerileri
+    reasoning_model: str    # Güçlü — mimari karar, broad analysis
     llm_base_url: str
     llm_timeout_seconds: int
     llm_max_retries: int
@@ -127,7 +128,8 @@ def load_config() -> AppConfig:
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         embedding_dim=int(os.getenv("EMBEDDING_DIM", "1536")),
-        analysis_model=os.getenv("ANALYSIS_MODEL", "openai/gpt-4o-mini"),
+        budget_model=os.getenv("BUDGET_MODEL", "google/gemini-2.0-flash-exp:free"),
+        analysis_model=os.getenv("ANALYSIS_MODEL", "google/gemini-flash-1.5"),
         reasoning_model=os.getenv("REASONING_MODEL", "openai/o4-mini"),
         llm_base_url=os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
         llm_timeout_seconds=int(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
