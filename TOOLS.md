@@ -1,6 +1,6 @@
 # GraphRagMCP V2 — Tool Dokümantasyonu
 
-**26 MCP Tool | SOTA GraphRAG | CrossEncoder Reranking | PostgreSQL + Qdrant + Redis + Neo4j**
+**34 MCP Tool | SOTA GraphRAG | CrossEncoder Reranking | PostgreSQL + Qdrant + Redis + Neo4j**
 
 MCP Endpoint: `http://deva.adanaekspres.com:8000/sse`  
 Dashboard: `http://deva.adanaekspres.com:8080`
@@ -641,20 +641,22 @@ Ajan aynı anda yalnızca tek modda çalışır:
 | Tool | Plane | Kritiklik | Cache |
 |---|---|---|---|
 | `execute_agent_task` | Orchestration | #1 | Hayır |
-| `search_code` | Knowledge | Yüksek | Redis (exact + semantic) |
-| `grep_exact_string` | Knowledge | Yüksek | Hayır |
 | `index_project` | Knowledge | Yüksek | Hayır |
 | `incremental_index_project` | Knowledge | Yüksek | Hayır |
+| `search_code` | Knowledge | Yüksek | Redis (exact + semantic) |
 | `explain_code` | Knowledge | Orta | Hayır |
+| `grep_exact_string` | Knowledge | Yüksek | Hayır |
 | `search_repo_architecture` | Knowledge | Orta | Hayır |
 | `summarize_repository` | Knowledge | Orta | Hayır |
 | `analyze_change_impact` | Knowledge | Yüksek | Hayır |
 | `register_project` | Knowledge | Yüksek | Hayır |
 | `list_projects` | Knowledge | Düşük | Hayır |
-| `recall_memory` | Memory | Yüksek | Hayır |
-| `search_decisions` | Memory | Yüksek | Hayır |
+| `index_agent_docs` | Agent Docs | Orta | Hayır |
+| `search_agent_docs` | Agent Docs | Orta | Hayır |
 | `store_memory` | Memory | Orta | Hayır |
+| `recall_memory` | Memory | Yüksek | Hayır |
 | `store_decision_memory` | Memory | Yüksek | Hayır |
+| `search_decisions` | Memory | Yüksek | Hayır |
 | `compact_memory` | Memory | Orta | Hayır |
 | `run_memory_cycle` | Memory | Orta | Hayır |
 | `security_scan` | Analysis | KRİTİK | Hayır |
@@ -663,10 +665,15 @@ Ajan aynı anda yalnızca tek modda çalışır:
 | `code_clone_detection` | Analysis | Orta | Hayır |
 | `create_agent_task` | Execution | Orta | Hayır |
 | `get_task_status` | Execution | Düşük | Hayır |
+| `approve_task_step` | Execution | Orta | Hayır |
 | `complete_task` | Execution | Orta | Hayır |
+| `resume_task` | Execution | Orta | Hayır |
 | `list_agent_tasks` | Execution | Düşük | Hayır |
+| `get_project_state` | Execution | Düşük | Hayır |
+| `get_active_phase` | Execution | Düşük | Hayır |
 | `run_verification_plan` | Execution | Yüksek | Hayır |
-| `get_control_plane_stats` | Control | Düşük | Hayır |
+| `run_retrieval_eval` | Execution | Düşük | Hayır |
+| `get_control_plane_stats` | Control | Orta | Hayır |
 
 ---
 

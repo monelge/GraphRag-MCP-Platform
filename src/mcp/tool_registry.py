@@ -411,30 +411,45 @@ async def execute_agent_task(goal: str, project_path: str, collection: str = "")
 
 
 TOOL_FUNCTIONS = [
-    execute_agent_task,       # Ana Giriş Noktası
+    # ── Orkestrasyon ──────────────────────────────────────────────────────────
+    execute_agent_task,
+    # ── Knowledge Plane ───────────────────────────────────────────────────────
     index_project,
+    incremental_index_project,
     search_code,
     explain_code,
+    grep_exact_string,
     search_repo_architecture,
+    summarize_repository,
     analyze_change_impact,
+    register_project,
+    list_projects,
+    # ── Agent Docs ────────────────────────────────────────────────────────────
+    index_agent_docs,
     search_agent_docs,
+    # ── Memory Plane ──────────────────────────────────────────────────────────
     store_memory,
     recall_memory,
-    compact_memory,
     store_decision_memory,
     search_decisions,
-    grep_exact_string,
-    get_task_status,
-    complete_task,
-    list_agent_tasks,
-    get_project_state,
-    run_verification_plan,
-    get_control_plane_stats,
-    list_projects,
-    summarize_repository,
-    # Yeni analiz araçları
+    compact_memory,
+    run_memory_cycle,
+    # ── Analiz & Kalite Plane ─────────────────────────────────────────────────
     security_scan,
     refactor_suggestions,
     test_suggestion,
     code_clone_detection,
+    # ── Execution Plane ───────────────────────────────────────────────────────
+    create_agent_task,
+    get_task_status,
+    approve_task_step,
+    complete_task,
+    resume_task,
+    list_agent_tasks,
+    get_project_state,
+    get_active_phase,
+    run_verification_plan,
+    run_retrieval_eval,
+    # ── Control Plane ─────────────────────────────────────────────────────────
+    get_control_plane_stats,
 ]
