@@ -83,6 +83,15 @@ class AppConfig:
     tool_policy_extra_allowed: list[str]
     timezone: str
 
+    # Observability
+    otel_endpoint: str | None
+    prometheus_enabled: bool
+
+    # Security
+    secret_bypass_files: frozenset[str]
+    cross_encoder_enabled: bool
+    cross_encoder_model: str
+
 
 def _build_postgres_dsn() -> str:
     """Bireysel POSTGRES_* değişkenlerinden DSN oluşturur; POSTGRES_DSN varsa onu kullanır."""
@@ -111,7 +120,7 @@ def load_config() -> AppConfig:
         neo4j_password=os.getenv("NEO4J_PASSWORD", "graphmcp"),
         qdrant_url=os.getenv("QDRANT_URL", "http://qdrant:6333"),
         qdrant_api_key=os.getenv("QDRANT_API_KEY"),
-        redis_url=os.getenv("REDIS_URL", "redis://redis:6379/0"),
+        redis_url=os.getenv("REDIS_URL", "redis://redis:6380/0"),
 
         # AI Models
         openai_api_key=os.getenv("OPENAI_API_KEY", os.getenv("OPENROUTER_API_KEY", "")),
@@ -178,6 +187,17 @@ def load_config() -> AppConfig:
         mount_readwrite_paths=os.getenv("MOUNT_READWRITE_PATHS", "/tmp").split(":"),
         tool_policy_extra_allowed=[item.strip() for item in os.getenv("TOOL_POLICY_EXTRA_ALLOWED", "").split(";") if item.strip()],
         timezone=os.getenv("TZ", "Europe/Istanbul"),
+
+        # Observability
+        otel_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
+        prometheus_enabled=os.getenv("PROMETHEUS_ENABLED", "true").lower() == "true",
+
+        # Security
+        secret_bypass_files=frozenset(
+            f.strip() for f in os.getenv("SECRET_BYPASS_FILES", "").split(",") if f.strip()
+        ),
+        cross_encoder_enabled=os.getenv("CROSS_ENCODER_ENABLED", "true").lower() == "true",
+        cross_encoder_model=os.getenv("CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
     )
 
 

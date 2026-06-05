@@ -50,6 +50,7 @@ from src.mcp.tool_registry import (
     store_decision_memory,
     store_memory,
     summarize_repository,
+    grep_exact_string,
 )
 
 __all__ = [
@@ -86,6 +87,7 @@ __all__ = [
     "analyze_change_impact",
     "store_decision_memory",
     "search_decisions",
+    "grep_exact_string",
 ]
 
 if __name__ == "__main__":

@@ -14,7 +14,8 @@ if TYPE_CHECKING:
     from src.control.models.budgets import BudgetManager
     from src.storage.postgres_store import PostgresStore
 
-logger = logging.getLogger(__name__)
+from src.shared.logging_config import get_logger
+logger = get_logger(__name__)
 
 
 class ModelGateway:
@@ -68,6 +69,25 @@ class ModelGateway:
         model = get_model(task)
         if not model:
             raise ValueError(f"Task '{task}' için model tanımlı değil veya yerel (local) bir işlem.")
+        
+        # Log request parameters summary
+        api_params = {**kwargs}
+        if "messages" not in api_params:
+            msg_summary = f"{len(messages)} messages"
+            if messages:
+                msg_summary += f" (last: role={messages[-1].get('role')}, len={len(messages[-1].get('content', ''))})"
+        else:
+            msg_summary = "messages-in-kwargs"
+
+        logger.info("LLM chat completion isteği başlatılıyor", extra={
+            "model": model,
+            "task": task,
+            "task_id": task_id,
+            "node_name": node_name,
+            "msg_summary": msg_summary,
+            "api_params": {k: str(v) for k, v in api_params.items() if k != "messages"}
+        })
+
         last_error = None
         for attempt in range(1, self.max_retries + 1):
             t0 = time.monotonic()
@@ -81,7 +101,21 @@ class ModelGateway:
                 prompt_tokens     = usage.prompt_tokens     if usage else 0
                 completion_tokens = usage.completion_tokens if usage else 0
                 total_tokens      = usage.total_tokens      if usage else 0
+                
                 self._update_stats(model, latency, total_tokens)
+                
+                logger.info("LLM chat completion isteği başarıyla tamamlandı", extra={
+                    "model": model,
+                    "task": task,
+                    "task_id": task_id,
+                    "node_name": node_name,
+                    "latency_ms": latency,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "attempt": attempt
+                })
+
                 if self._pg:
                     try:
                         await self._pg.log_llm_usage(
@@ -98,7 +132,17 @@ class ModelGateway:
                 return response
             except Exception as exc:
                 last_error = exc
-                logger.warning("ModelGateway geçici hatası (%s) deneme %d/%d: %s", model, attempt, self.max_retries, exc)
+                latency = int((time.monotonic() - t0) * 1000)
+                logger.warning("LLM chat completion geçici hatası", extra={
+                    "model": model,
+                    "task": task,
+                    "task_id": task_id,
+                    "node_name": node_name,
+                    "latency_ms": latency,
+                    "attempt": attempt,
+                    "max_retries": self.max_retries,
+                    "error": str(exc)
+                })
                 if attempt < self.max_retries:
                     await asyncio.sleep(min(2 ** attempt, self.max_retry_wait))
         raise last_error if last_error else RuntimeError("ModelGateway failed without details")

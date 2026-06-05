@@ -6,7 +6,7 @@ import functools
 import time as _time
 from typing import Optional
 
-from src.shared.logging_config import get_logger
+from src.shared.logging_config import get_logger, set_correlation_id, clear_correlation_id
 
 logger = get_logger(__name__)
 _app = None
@@ -17,17 +17,25 @@ _memory = None
 _execution = None
 _control = None
 _orchestration = None
+_analysis = None
 
 
 def _tool(func):
     @ _app.tool()
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
+        import uuid
         # STDIO transport'ta lifespan tetiklenemeyebilir; lazy connect ile güvence altına al.
         if _ctx and _ctx.postgres and not _ctx.postgres.available:
             await _ctx.postgres.connect()
             if _ctx.audit_logger:
                 _ctx.audit_logger.set_postgres(_ctx.postgres)
+        
+        # Get or generate correlation/task ID
+        task_id = kwargs.get("task_id") or kwargs.get("collection")
+        corr_id = str(task_id) if task_id else uuid.uuid4().hex[:8]
+        token = set_correlation_id(corr_id)
+        
         started = _time.monotonic()
         log_ctx = {"tool": func.__name__}
         for key in ("collection", "query", "task_id", "project_path", "title"):
@@ -41,13 +49,15 @@ def _tool(func):
             return result
         except Exception as exc:
             log_ctx["duration_ms"] = round((_time.monotonic() - started) * 1000)
-            logger.error("MCP tool hata", extra=dict(log_ctx, error=str(exc)))
+            logger.critical("MCP tool kritik hata oluştu", exc_info=True, extra=dict(log_ctx, error=str(exc)))
             raise
+        finally:
+            clear_correlation_id(token)
     return wrapper
 
 
-def set_runtime(app, ctx, indexing, retrieval, memory, execution, control, orchestration) -> None:
-    global _app, _ctx, _indexing, _retrieval, _memory, _execution, _control, _orchestration
+def set_runtime(app, ctx, indexing, retrieval, memory, execution, control, orchestration, analysis=None) -> None:
+    global _app, _ctx, _indexing, _retrieval, _memory, _execution, _control, _orchestration, _analysis
     _app = app
     _ctx = ctx
     _indexing = indexing
@@ -56,10 +66,16 @@ def set_runtime(app, ctx, indexing, retrieval, memory, execution, control, orche
     _execution = execution
     _control = control
     _orchestration = orchestration
+    _analysis = analysis
 
 
 def register_all_tools(app, ctx) -> None:
-    set_runtime(app, ctx, ctx.indexing_handler, ctx.retrieval_handler, ctx.memory_handler, ctx.execution_handler, ctx.control_handler, ctx.orchestration_handler)
+    set_runtime(
+        app, ctx,
+        ctx.indexing_handler, ctx.retrieval_handler, ctx.memory_handler,
+        ctx.execution_handler, ctx.control_handler, ctx.orchestration_handler,
+        getattr(ctx, "analysis_handler", None),
+    )
     for func in TOOL_FUNCTIONS:
         _tool(func)
 
@@ -174,16 +190,204 @@ async def search_decisions(query: str, collection: str = "", top_k: int = 5) -> 
     return await _memory.search_decisions(query, collection, top_k)
 
 
+async def grep_exact_string(
+    query: str,
+    collection: str = "",
+    project_path: str = "",
+    file_extension: str = "",
+    case_sensitive: bool = False,
+) -> str:
+    """
+    Kod tabanındaki dosyalarda belirli bir metni (metin veya anahtar kelime)
+    deterministik olarak arar. find + grep komutlarının MCP uyumlu hızlı ve güvenli alternatifidir.
+
+    Args:
+        query: Aranacak kesin kelime veya metin.
+        collection: İlgili projenin koleksiyon adı (örn: Vendoris, WareLogisticcBYS).
+        project_path: Doğrudan aranacak dizin yolu (belirtilmezse koleksiyondan çözülür).
+        file_extension: Filtrelenecek dosya uzantısı (örn: "cs", "py", "js"). Boş bırakılırsa hepsi aranır.
+        case_sensitive: Arama harf duyarlı mı olsun? Varsayılan False.
+    """
+    import os
+    
+    # 1. Proje dizinini çözümle
+    target_path = project_path
+    if not target_path and collection:
+        profile = _ctx.registry.get_profile(collection) if _ctx and _ctx.registry else None
+        if profile:
+            target_path = profile.project_path
+        else:
+            # Koleksiyon adına göre kayıtlı profillerden bulmayı dene
+            if _ctx and _ctx.registry:
+                for p in _ctx.registry.list_profiles():
+                    if p.collection == collection or p.project_name == collection:
+                        target_path = p.project_path
+                        break
+                        
+    if not target_path:
+        # Eğer hala bulunamadıysa ve kayıtlı profiller varsa ilkini varsayılan al
+        if _ctx and _ctx.registry:
+            profiles = _ctx.registry.list_profiles()
+            if profiles:
+                target_path = profiles[0].project_path
+                collection = profiles[0].collection
+                
+    if not target_path:
+        return "⚠️ Arama yapılacak proje yolu bulunamadı. Lütfen geçerli bir 'collection' veya 'project_path' belirtin."
+
+    target_path = os.path.abspath(target_path)
+    if not os.path.exists(target_path):
+        return f"⚠️ Belirtilen dizin yolu bulunamadı: {target_path}"
+
+    # Engellenecek büyük/binary/build dizinler
+    EXCLUDE_DIRS = {
+        ".git", "bin", "obj", "node_modules", ".idea", ".gemini", 
+        "htmlcov", "__pycache__", "dist", "build", ".coverage",
+        ".pytest_cache", ".vs", "out", "publish"
+    }
+    
+    # Binary dosya uzantıları veya atlanacaklar
+    EXCLUDE_EXTS = {
+        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".tar", 
+        ".gz", ".exe", ".dll", ".pdb", ".so", ".dylib", ".class", ".pyc",
+        ".db", ".sqlite", ".sqlite3", ".woff", ".woff2", ".ttf", ".eot"
+    }
+
+    results = []
+    total_matches = 0
+    max_matches = 100
+    max_files = 30
+    
+    # Harf duyarlılığı ayarı
+    search_query = query if case_sensitive else query.lower()
+    
+    file_ext = file_extension.strip().lower()
+    if file_ext and not file_ext.startswith("."):
+        file_ext = "." + file_ext
+
+    # Python generator/walk ile hızlı arama
+    for root, dirs, files in os.walk(target_path):
+        # Dizin budama (inplace modification ile gereksiz dizinlere girilmesini önleriz)
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".")]
+        
+        for file in files:
+            file_path = os.path.join(root, file)
+            _, ext = os.path.splitext(file)
+            ext_lower = ext.lower()
+            
+            # Uzantı filtreleri
+            if ext_lower in EXCLUDE_EXTS:
+                continue
+            if file_ext and ext_lower != file_ext:
+                continue
+                
+            # Dosya okuma ve arama
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                    
+                match_content = content if case_sensitive else content.lower()
+                if search_query in match_content:
+                    lines = content.splitlines()
+                    file_matches = []
+                    for idx, line in enumerate(lines, 1):
+                        match_line = line if case_sensitive else line.lower()
+                        if search_query in match_line:
+                            file_matches.append((idx, line.strip()))
+                            total_matches += 1
+                            if total_matches >= max_matches:
+                                break
+                                
+                    if file_matches:
+                        rel_path = os.path.relpath(file_path, target_path)
+                        results.append({
+                            "file": rel_path,
+                            "matches": file_matches
+                        })
+                        
+                    if len(results) >= max_files or total_matches >= max_matches:
+                        break
+            except Exception:
+                continue
+                
+        if len(results) >= max_files or total_matches >= max_matches:
+            break
+
+    if not results:
+        return f"🔍 Dizin içinde '{query}' kelimesiyle eşleşen sonuç bulunamadı. (Dizin: {target_path})"
+
+    output_lines = [
+        f"## 🔍 Deterministik Arama Sonuçları (Grep Exact String)",
+        f"- **Sorgu:** `{query}` (Harf Duyarlılığı: {'Evet' if case_sensitive else 'Hayır'})",
+        f"- **Hedef Dizin:** `{target_path}`",
+        f"- **Eşleşen Dosya:** {len(results)} | **Toplam Satır Eşleşmesi:** {total_matches}",
+        ""
+    ]
+    
+    for item in results:
+        output_lines.append(f"📄 **`{item['file']}`**")
+        for line_num, line_text in item['matches']:
+            truncated_line = line_text[:180] + "..." if len(line_text) > 180 else line_text
+            output_lines.append(f"  - Satır {line_num}: `{truncated_line}`")
+        output_lines.append("")
+        
+    if total_matches >= max_matches or len(results) >= max_files:
+        output_lines.append(f"⚠️ *Çok fazla eşleşme bulundu. Arama sonuçları sınırlandırıldı ({max_matches} eşleşme / {max_files} dosya).*")
+        
+    return "\n".join(output_lines)
+
+
+async def security_scan(project_path: str, collection: str = "") -> str:
+    """
+    Pattern-based SAST: SQL injection, hardcoded secret, eval/exec, shell injection,
+    XSS, path traversal, insecure random, pickle deserializasyonu.
+    Her bulgu için severity (CRITICAL/HIGH/MEDIUM), dosya, satır ve fix önerisi döner.
+    """
+    if _analysis is None:
+        return "❌ AnalysisHandler başlatılmadı"
+    return await _analysis.security_scan(project_path, collection)
+
+
+async def refactor_suggestions(project_path: str, collection: str = "") -> str:
+    """
+    AST-based code smell tespiti: long method (>50 satır), deep nesting (>4 level),
+    god class (>500 satır / >15 method), large file (>800 satır).
+    """
+    if _analysis is None:
+        return "❌ AnalysisHandler başlatılmadı"
+    return await _analysis.refactor_suggestions(project_path, collection)
+
+
+async def test_suggestion(project_path: str, collection: str = "", target_file: str = "") -> str:
+    """
+    Test coverage gap analizi: test dosyası olmayan public fonksiyonları tespit eder
+    ve LLM ile happy path, edge case, hata senaryosu test önerileri üretir.
+    """
+    if _analysis is None:
+        return "❌ AnalysisHandler başlatılmadı"
+    return await _analysis.test_suggestion(project_path, collection, target_file)
+
+
+async def code_clone_detection(collection: str = "", threshold: float = 0.95) -> str:
+    """
+    Qdrant embedding'lerini cosine similarity ile karşılaştırır.
+    threshold (default 0.95) üzerindeki chunk çiftlerini semantic clone olarak raporlar.
+    """
+    if _analysis is None:
+        return "❌ AnalysisHandler başlatılmadı"
+    return await _analysis.code_clone_detection(collection, threshold)
+
+
 async def execute_agent_task(goal: str, project_path: str, collection: str = "") -> str:
     """
     Kritik: Tüm V2 Plane'lerini (Knowledge, Memory, Agent, Execution, Control) kullanarak
-    verilen hedefi otonom bir şekilde gerçekleştiren ana orkestrasyon aracıdır.
+    verilen hedon otonom bir şekilde gerçekleştiren ana orkestrasyon aracıdır.
     """
     return await _orchestration.execute_agent_task(goal, project_path, collection)
 
 
 TOOL_FUNCTIONS = [
-    execute_agent_task,  # Ana Giriş Noktası
+    execute_agent_task,       # Ana Giriş Noktası
     index_project,
     search_code,
     explain_code,
@@ -195,6 +399,7 @@ TOOL_FUNCTIONS = [
     compact_memory,
     store_decision_memory,
     search_decisions,
+    grep_exact_string,
     get_task_status,
     complete_task,
     list_agent_tasks,
@@ -203,4 +408,9 @@ TOOL_FUNCTIONS = [
     get_control_plane_stats,
     list_projects,
     summarize_repository,
+    # Yeni analiz araçları
+    security_scan,
+    refactor_suggestions,
+    test_suggestion,
+    code_clone_detection,
 ]

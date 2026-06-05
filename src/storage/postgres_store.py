@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Optional
 from urllib.parse import urlparse
 
-logger = logging.getLogger(__name__)
+from src.shared.logging_config import get_logger
+logger = get_logger(__name__)
 
 from src.shared.config import config
 from src.shared.utils import sha256_hash
@@ -209,6 +211,7 @@ class PostgresStore:
     async def _init_connection(conn):
         await conn.execute("SET client_encoding = 'UTF8'")
         await conn.execute("SET search_path TO public")
+        await conn.execute("SET timezone TO 'Europe/Istanbul'")
 
     @property
     def available(self) -> bool:
@@ -234,6 +237,7 @@ class PostgresStore:
         answerability_fail: bool = False,
         user_id: str = None,
     ) -> None:
+        t0 = time.monotonic()
         try:
             async with self._pool.acquire() as conn:
                 await conn.execute(
@@ -258,8 +262,11 @@ class PostgresStore:
                     answerability_fail,
                     self._hash_user_id(user_id),
                 )
+            duration = int((time.monotonic() - t0) * 1000)
+            if duration > 500:
+                logger.warning("PostgreSQL yavaş sorgu (log_retrieval)", extra={"latency_ms": duration, "collection": collection})
         except Exception as _exc:
-            logger.warning("retrieval_log yazılamadı: %s", _exc)
+            logger.warning("retrieval_log yazılamadı", exc_info=True, extra={"error": str(_exc)})
 
     async def close(self) -> None:
         if self._pool:
@@ -277,6 +284,7 @@ class PostgresStore:
         node_name: str = None,
     ) -> None:
         """LLM çağrılarının token kullanımını model_usage_logs tablosuna yazar."""
+        t0 = time.monotonic()
         try:
             async with self._pool.acquire() as conn:
                 await conn.execute(
@@ -294,8 +302,11 @@ class PostgresStore:
                     total_tokens,
                     latency_ms,
                 )
+            duration = int((time.monotonic() - t0) * 1000)
+            if duration > 500:
+                logger.warning("PostgreSQL yavaş sorgu (log_llm_usage)", extra={"latency_ms": duration, "model": model, "task_id": task_id})
         except Exception as _exc:
-            logger.debug("DB write hatası: %s", _exc)
+            logger.debug("DB write hatası", exc_info=True, extra={"error": str(_exc)})
 
     @lazy_connect
     async def log_audit_event(
@@ -307,6 +318,7 @@ class PostgresStore:
         metadata: dict | None = None,
     ) -> None:
         """Audit olaylarını privacy-safe biçimde audit_events tablosuna yazar."""
+        t0 = time.monotonic()
         try:
             async with self._pool.acquire() as conn:
                 await conn.execute(
@@ -321,12 +333,16 @@ class PostgresStore:
                     summary or None,
                     json.dumps(metadata or {}),
                 )
+            duration = int((time.monotonic() - t0) * 1000)
+            if duration > 500:
+                logger.warning("PostgreSQL yavaş sorgu (log_audit_event)", extra={"latency_ms": duration, "event_type": event_type, "task_id": task_id})
         except Exception as exc:
-            logger.debug("audit_event yazma hatası: %s", exc)
+            logger.debug("audit_event yazma hatası", exc_info=True, extra={"error": str(exc)})
 
     @lazy_connect
     async def get_llm_usage_stats(self, days: int = 7) -> list[dict]:
         """Son N günün model bazlı token özetini döndürür."""
+        t0 = time.monotonic()
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
@@ -345,13 +361,18 @@ class PostgresStore:
                     """,
                     str(days),
                 )
+                duration = int((time.monotonic() - t0) * 1000)
+                if duration > 500:
+                    logger.warning("PostgreSQL yavaş sorgu (get_llm_usage_stats)", extra={"latency_ms": duration, "days": days})
                 return [dict(r) for r in rows]
-        except Exception:
+        except Exception as exc:
+            logger.error("get_llm_usage_stats hatası", exc_info=True, extra={"error": str(exc)})
             return []
 
     @lazy_connect
     async def get_retrieval_stats(self, days: int = 7) -> list[dict]:
         """Son N günün collection bazlı retrieval özetini döndürür."""
+        t0 = time.monotonic()
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
@@ -372,13 +393,18 @@ class PostgresStore:
                     """,
                     str(days),
                 )
+                duration = int((time.monotonic() - t0) * 1000)
+                if duration > 500:
+                    logger.warning("PostgreSQL yavaş sorgu (get_retrieval_stats)", extra={"latency_ms": duration, "days": days})
                 return [dict(r) for r in rows]
-        except Exception:
+        except Exception as exc:
+            logger.error("get_retrieval_stats hatası", exc_info=True, extra={"error": str(exc)})
             return []
 
     @lazy_connect
     async def get_audit_stats(self, days: int = 7) -> dict:
         """Son N günün event_type bazlı audit özeti ile en son 5 olayı döndürür."""
+        t0 = time.monotonic()
         try:
             async with self._pool.acquire() as conn:
                 # Event tipine göre sayım
@@ -406,9 +432,13 @@ class PostgresStore:
                     """,
                     str(days),
                 )
+                duration = int((time.monotonic() - t0) * 1000)
+                if duration > 500:
+                    logger.warning("PostgreSQL yavaş sorgu (get_audit_stats)", extra={"latency_ms": duration, "days": days})
                 return {
                     "summary": [dict(r) for r in summary_rows],
                     "recent": [dict(r) for r in recent_rows],
                 }
-        except Exception:
+        except Exception as exc:
+            logger.error("get_audit_stats hatası", exc_info=True, extra={"error": str(exc)})
             return {"summary": [], "recent": []}

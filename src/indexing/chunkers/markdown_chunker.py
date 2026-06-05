@@ -57,19 +57,18 @@ _REQUIRED_ON_START: set[str] = {
     "state.md", "context.md", "tasks.md", "rules.md", "security.md"
 }
 
-# SecretScanner'ı bypass eden dosya pattern'leri (genellikle documentation)
-_WHITELIST_SKIP_SCANNING: set[str] = {
-    "security.md",
-    "rules.md",
-    "backend.md",
-    "frontend.md",
-    "backend-architecture.md",
-    "mobile-plan.md",
-    "mobile-state.md",
-    "mobile-tasks.md",
-    "state.md",
-    "tasks.md",
-}
+# SecretScanner'ı bypass eden dosya pattern'leri — production'da boş, config'den yüklenir
+_DEFAULT_BYPASS_FILES: frozenset[str] = frozenset({
+    "security.md", "rules.md", "backend.md", "frontend.md",
+    "backend-architecture.md", "mobile-plan.md", "mobile-state.md",
+    "mobile-tasks.md", "state.md", "tasks.md",
+})
+
+def _get_whitelist_skip_scanning() -> frozenset[str]:
+    """Production env'de boş; development'ta default dosyaları bypass eder."""
+    if config.environment == "production":
+        return config.secret_bypass_files  # config'den yüklenir, default boş
+    return config.secret_bypass_files if config.secret_bypass_files else _DEFAULT_BYPASS_FILES
 
 
 @dataclass
@@ -112,7 +111,7 @@ class MarkdownChunker:
         skip_scanning = (
             config.allow_secret_bypass
             and config.environment != "production"
-            and filename in _WHITELIST_SKIP_SCANNING
+            and filename in _get_whitelist_skip_scanning()
         )
 
         return self._chunk_text(content, rel, layer, doc_priority, required, skip_scanning)

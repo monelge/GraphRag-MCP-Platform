@@ -17,7 +17,7 @@ Docker içi iletişimde servisler şu adresleri kullanır:
 
 *   **Neo4j (Bolt):** `bolt://neo4j:7687`
 *   **Qdrant:** `http://qdrant:6333`
-*   **Redis:** `redis://redis:6379`
+*   **Redis:** `redis://redis:6379` (Internal), Port `6380` (Host)
 *   **Postgres:** `postgresql://graphmcp:graphmcp@postgres:5432/graphmcp`
 
 ## 🛠️ Docker Servis İsimleri

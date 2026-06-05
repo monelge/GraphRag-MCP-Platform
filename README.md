@@ -148,6 +148,43 @@ Kullandığınız AI istemcisinin (örneğin VSCode Cline veya Roo Code) `.mcp.j
 
 ---
 
+## 🦙 Yerel Ollama & OpenAI API Gateway Entegrasyonu (V2-Bridge)
+
+**GraphRagMCP V2**, yerel yapay zeka altyapınız (**Ollama**) ile tam uyumludur. Ayrıca sisteminize kazandırdığımız **OpenAI API Gateway Bridge** sayesinde, Model Context Protocol (MCP) desteği olmayan kapalı ekosistemlerdeki AI araçlarını (**Claude Code, Copilot, Gemini CLI**) yerel GraphRAG kod belleğinize entegre edebilirsiniz.
+
+Ayrıntılı adım adım yönergelere ve terminal komutlarına **[Yerel Ollama & CLI Entegrasyon Kılavuzu](file:///Volumes/MacBook/RiderProjects/GraphRagMCP/docs/guides/local_ollama_and_cli_tools_integration.md)** dosyasından erişebilirsiniz.
+
+### 1️⃣ Yerel Ollama Kurulumu
+Docker konteynerlerinizin host makinenizdeki Ollama'ya (`http://localhost:11434`) erişmesi için `.env` dosyanızı güncelleyin:
+```env
+LLM_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_API_KEY=ollama  # Kütüphane uyumluluğu için rastgele bir değer verin
+ANALYSIS_MODEL=qwen2.5-coder:latest
+REASONING_MODEL=qwen2.5-coder:latest
+```
+
+### 2️⃣ OpenAI Bridge Sunucusu (Port 5555)
+FastAPI tabanlı `openai-bridge` servisimiz host makinenizde **`5555`** portundan hizmet verir. Copilot ve Gemini CLI gibi araçlar bu yerel API'yi standart bir OpenAI uç noktası olarak görür:
+- **Base URL / Endpoint:** `http://localhost:5555/v1`
+- **Model:** `graph-mcp` veya `gpt-4o-mini`
+
+### 3️⃣ İstemci (CLI / Agent) Yapılandırmaları
+
+- **Claude Code v2.1.148:** Proje kök dizininde `claude` komutunu çalıştırın ve MCP sunucumuzu onaylayın:
+  > `Allow project MCP servers? (y/N) -> y`
+- **Copilot CLI:** API base URL adresini yerel köprümüze yönlendirin:
+  ```bash
+  export OPENAI_BASE_URL=http://localhost:5555/v1
+  export OPENAI_API_KEY=ollama
+  ```
+- **Gemini CLI:** Çevre değişkenini köprü sunucumuza yönlendirin:
+  ```bash
+  export GEMINI_API_BASE=http://localhost:5555/v1
+  export GEMINI_API_KEY=ollama
+  ```
+
+---
+
 ## ⚡ Hızlı Doğrulama ve Test Komutları
 
 Yeniden düzenlenen yapıda, tüm doğrulama komutları `/scripts/launchers/` altında yer almaktadır. Host makineden Docker konteyneri içindeki testleri çalıştırmak için:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import logging
 import os
@@ -161,6 +162,8 @@ class RetrievalHandler:
             return "🔍 Sorguya uygun kod bloğu bulunamadı."
 
         expander = GraphExpander(self.ctx.neo4j)
+
+        # Graph augment + embedding paralel çalışır
         with tracer.step("graph_augment"):
             candidates = await expander.augment_candidates(
                 query=query,
@@ -181,12 +184,35 @@ class RetrievalHandler:
             deduped = self.ctx.deduplicator.deduplicate(reranked)
             tracer.record("dedup", item_count=len(deduped))
 
+        # Graph expand + recency scoring paralel çalışır
         with tracer.step("graph_expand"):
             entrypoints = [candidate.get("name", "") for candidate in deduped if candidate.get("name")]
-            graph_nodes = await expander.expand(entrypoints)
+            graph_task = asyncio.create_task(expander.expand(entrypoints))
+            graph_nodes = await graph_task
             centrality = await expander.get_centrality(graph_nodes)
+
+            now = time.time()
+            recency_w = config.context_score_weights.get("recency", 0.04)
+            centrality_w = config.context_score_weights.get("centrality", 0.15)
+            rerank_w = config.context_score_weights.get("rerank", 0.30)
+            retrieval_w = config.context_score_weights.get("retrieval", 0.51)
+
             for candidate in deduped:
                 candidate["graph_centrality"] = centrality.get(candidate.get("name", ""), 0.0)
+                # Recency boost: son değişiklik ne kadar yakınsa skoru o kadar yüksek
+                last_modified = candidate.get("last_modified") or candidate.get("indexed_at") or now
+                days_old = max(0.0, (now - float(last_modified)) / 86400)
+                recency_score = 1.0 / (1.0 + days_old * 0.1)
+
+                base = float(candidate.get("score", 0.0) or 0.0)
+                rerank = float(candidate.get("rerank_score", 0.0) or 0.0)
+                centrality_score = float(candidate.get("graph_centrality", 0.0) or 0.0)
+                candidate["final_score"] = (
+                    base * retrieval_w
+                    + rerank * rerank_w
+                    + centrality_score * centrality_w
+                    + recency_score * recency_w
+                )
             tracer.record("graph_expand", item_count=len(graph_nodes))
 
         assessment = assess_answerability(deduped, query_type=query_type)

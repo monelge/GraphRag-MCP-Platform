@@ -43,8 +43,19 @@ class MemoryCompactor:
         )
         
         await self.store.store_memory(new_entry)
-        
-        return f"✅ {len(candidates)} kayıt başarıyla birleştirildi: {new_entry.entry_id}"
+
+        # Eski kayıtları archived olarak işaretle
+        archived_count = 0
+        for candidate in candidates:
+            entry_id = candidate.get("id") or candidate.get("entry_id")
+            if entry_id:
+                try:
+                    await self.store.update_memory_status(entry_id, "archived")
+                    archived_count += 1
+                except Exception:
+                    pass
+
+        return f"✅ {len(candidates)} kayıt birleştirildi, {archived_count} kayıt archived yapıldı: {new_entry.entry_id}"
 
     async def extract_atomic_facts(self, collection: str, limit: int = 10) -> str:
         """

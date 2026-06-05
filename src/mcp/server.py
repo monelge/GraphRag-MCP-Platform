@@ -15,14 +15,16 @@ from src.control.observability.metrics import get_metrics
 from src.control.observability.tracer import PipelineTracer
 from src.execution.runners.command_runner import CommandRunner
 from src.execution.sandbox.runtime_manager import SandboxRuntimeManager
-from src.handlers import AppContext, ControlHandler, ExecutionHandler, IndexingHandler, MemoryHandler, RetrievalHandler, OrchestrationHandler
+from src.handlers import AppContext, AnalysisHandler, ControlHandler, ExecutionHandler, IndexingHandler, MemoryHandler, RetrievalHandler, OrchestrationHandler
 from src.mcp.tool_registry import register_all_tools
 from src.retrieval.context.token_budget import TokenBudgetOptimizer
 from src.retrieval.ranking.deduplicator import SemanticDeduplicator
-from src.retrieval.ranking.reranker import LocalReranker
+from src.retrieval.ranking.cross_encoder_reranker import CrossEncoderReranker
 from src.retrieval.search.impact_analysis import ImpactAnalyzer
 from src.shared.logging_config import get_logger, setup_logging
 from src.shared.project_registry import ProjectRegistry
+from src.shared.telemetry import setup_telemetry
+from src.shared import metrics as prom_metrics
 from src.storage.episodic_store import EpisodicStore
 from src.storage.neo4j_store import Neo4jStore
 from src.storage.postgres_store import PostgresStore
@@ -31,6 +33,7 @@ from src.storage.redis_store import RedisStore
 setup_logging()
 logger = get_logger(__name__)
 load_dotenv()
+setup_telemetry()
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -78,7 +81,7 @@ _model_gateway.set_budget_manager(_budget_manager)
 # _audit._pg lifespan beklemeden hemen bağlanır; pool yokken log_audit_event zaten erken döner.
 _audit.set_postgres(_postgres)
 _dataset_manager = DatasetManager()
-_reranker = LocalReranker()
+_reranker = CrossEncoderReranker()
 _deduplicator = SemanticDeduplicator()
 _budget_opt = TokenBudgetOptimizer()
 _impact_analyzer = ImpactAnalyzer(_neo4j)
@@ -114,6 +117,7 @@ _memory = MemoryHandler(_app_ctx)
 _execution = ExecutionHandler(_app_ctx, retrieval=_retrieval)
 _control = ControlHandler(_app_ctx, indexing=_indexing)
 _orchestration = OrchestrationHandler(_app_ctx)
+_analysis = AnalysisHandler(_app_ctx)
 
 object.__setattr__(_app_ctx, "retrieval_handler", _retrieval)
 object.__setattr__(_app_ctx, "indexing_handler", _indexing)
@@ -121,6 +125,7 @@ object.__setattr__(_app_ctx, "memory_handler", _memory)
 object.__setattr__(_app_ctx, "execution_handler", _execution)
 object.__setattr__(_app_ctx, "control_handler", _control)
 object.__setattr__(_app_ctx, "orchestration_handler", _orchestration)
+object.__setattr__(_app_ctx, "analysis_handler", _analysis)
 _orchestrator.app_context = _app_ctx
 
 
@@ -142,8 +147,27 @@ async def _lifespan(server):
 
 
 def build_app(ctx: AppContext) -> FastMCP:
+    from src.shared.config import config
     app = FastMCP("graph-mcp", lifespan=_lifespan)
     register_all_tools(app, ctx)
+
+    # /metrics endpoint — Prometheus scraping için (sadece HTTP/SSE transport'ta anlamlı)
+    if config.prometheus_enabled:
+        try:
+            from fastapi import FastAPI, Response
+            from fastapi.routing import APIRoute
+
+            # FastMCP'nin underlying ASGI app'ini al veya wrap et
+            underlying = getattr(app, "_app", None) or getattr(app, "app", None)
+            if underlying is not None:
+                @underlying.get("/metrics", include_in_schema=False)
+                async def metrics_endpoint():
+                    data, content_type = prom_metrics.generate_metrics_response()
+                    return Response(content=data, media_type=content_type)
+                logger.info("/metrics endpoint aktif")
+        except Exception as e:
+            logger.debug("/metrics endpoint eklenemedi: %s", e)
+
     return app
 
 

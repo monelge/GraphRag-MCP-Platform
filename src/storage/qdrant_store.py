@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import time
 import uuid
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
@@ -11,7 +12,8 @@ from qdrant_client.models import (
 from src.shared.config import config
 from src.indexing.chunkers.chunk_models import CodeChunk, AgentDocChunk
 
-logger = logging.getLogger(__name__)
+from src.shared.logging_config import get_logger
+logger = get_logger(__name__)
 
 
 class QdrantStore:
@@ -20,9 +22,10 @@ class QdrantStore:
         self.collection = collection or config.default_collection
         logger.debug("Initializing QdrantStore collection=%s url=%s", self.collection, config.qdrant_url)
         try:
+            api_key = config.qdrant_api_key or None
             self.client = AsyncQdrantClient(
                 url=config.qdrant_url,
-                api_key=config.qdrant_api_key,
+                api_key=api_key,
             )
         except Exception as exc:
             logger.error("Qdrant AsyncQdrantClient initialization failed: %s", exc)
@@ -33,30 +36,36 @@ class QdrantStore:
         Koleksiyonu oluşturur. Varsa dokunmaz.
         Dense + Sparse vektörler aynı koleksiyonda yaşar — hibrit arama budur.
         """
-        existing = await self.client.get_collections()
-        names = [c.name for c in existing.collections]
-        if self.collection not in names:
-            logger.info("Qdrant collection yok, oluşturuluyor: %s", self.collection)
-            await self.client.create_collection(
-                collection_name=self.collection,
-                vectors_config={
-                    "dense": VectorParams(size=config.embedding_dim, distance=Distance.COSINE),
-                },
-                sparse_vectors_config={
-                    "sparse": SparseVectorParams(
-                        index=SparseIndexParams(on_disk=False)
-                    ),
-                },
-            )
-            for field_name in ("source_type", "layer", "doc_priority", "is_deleted", "relative_path", "chunk_type", "project_name"):
-                await self.client.create_payload_index(
+        t0 = time.monotonic()
+        try:
+            existing = await self.client.get_collections()
+            names = [c.name for c in existing.collections]
+            if self.collection not in names:
+                logger.info("Qdrant collection yok, oluşturuluyor", extra={"collection": self.collection})
+                await self.client.create_collection(
                     collection_name=self.collection,
-                    field_name=field_name,
-                    field_schema=PayloadSchemaType.KEYWORD,
+                    vectors_config={
+                        "dense": VectorParams(size=config.embedding_dim, distance=Distance.COSINE),
+                    },
+                    sparse_vectors_config={
+                        "sparse": SparseVectorParams(
+                            index=SparseIndexParams(on_disk=False)
+                        ),
+                    },
                 )
-            logger.info("Qdrant collection oluşturuldu: %s", self.collection)
-        else:
-            logger.debug("Qdrant collection zaten mevcut: %s", self.collection)
+                for field_name in ("source_type", "layer", "doc_priority", "is_deleted", "relative_path", "chunk_type", "project_name"):
+                    await self.client.create_payload_index(
+                        collection_name=self.collection,
+                        field_name=field_name,
+                        field_schema=PayloadSchemaType.KEYWORD,
+                    )
+                latency = int((time.monotonic() - t0) * 1000)
+                logger.info("Qdrant collection başarıyla oluşturuldu", extra={"collection": self.collection, "latency_ms": latency})
+            else:
+                logger.debug("Qdrant collection zaten mevcut", extra={"collection": self.collection})
+        except Exception as exc:
+            logger.error("Qdrant collection doğrulama/oluşturma hatası", exc_info=True, extra={"collection": self.collection, "error": str(exc)})
+            raise
 
     async def get_indexed_file_paths(self) -> set[str]:
         """Qdrant'ta zaten indekslenmiş dosya yollarını döndürür."""
@@ -92,6 +101,7 @@ class QdrantStore:
         extra_payload: dict | None = None,
     ):
         """Chunk'ları hem dense hem sparse vektörleriyle birlikte Qdrant'a yazar."""
+        t0 = time.monotonic()
         points = []
         for chunk, dense, sparse in zip(chunks, dense_vecs, sparse_vecs):
             payload = chunk.to_dict()
@@ -113,7 +123,15 @@ class QdrantStore:
                 },
                 payload=payload,
             ))
-        await self.client.upsert(collection_name=self.collection, points=points)
+        chunk_count = len(points)
+        logger.info("Qdrant code chunk'ları yazma işlemi başlatılıyor", extra={"collection": self.collection, "chunk_count": chunk_count})
+        try:
+            await self.client.upsert(collection_name=self.collection, points=points)
+            latency = int((time.monotonic() - t0) * 1000)
+            logger.info("Qdrant code chunk'ları başarıyla yazıldı", extra={"collection": self.collection, "chunk_count": chunk_count, "latency_ms": latency})
+        except Exception as exc:
+            logger.error("Qdrant code chunk'ları yazma hatası", exc_info=True, extra={"collection": self.collection, "chunk_count": chunk_count, "error": str(exc)})
+            raise
 
     @staticmethod
     def _chunk_id_to_point_id(chunk_id: str) -> str:
@@ -129,6 +147,7 @@ class QdrantStore:
         sparse_vecs,
     ) -> None:
         """Agent doc chunk'larını Qdrant'a yazar."""
+        t0 = time.monotonic()
         points = []
         for chunk, dense, sparse in zip(chunks, dense_vecs, sparse_vecs):
             points.append(PointStruct(
@@ -157,7 +176,15 @@ class QdrantStore:
                     "updated_at":               chunk.updated_at,
                 },
             ))
-        await self.client.upsert(collection_name=self.collection, points=points)
+        chunk_count = len(points)
+        logger.info("Qdrant agent doc chunk'ları yazma işlemi başlatılıyor", extra={"collection": self.collection, "chunk_count": chunk_count})
+        try:
+            await self.client.upsert(collection_name=self.collection, points=points)
+            latency = int((time.monotonic() - t0) * 1000)
+            logger.info("Qdrant agent doc chunk'ları başarıyla yazıldı", extra={"collection": self.collection, "chunk_count": chunk_count, "latency_ms": latency})
+        except Exception as exc:
+            logger.error("Qdrant agent doc chunk'ları yazma hatası", exc_info=True, extra={"collection": self.collection, "chunk_count": chunk_count, "error": str(exc)})
+            raise
 
     async def get_agent_doc_chunks_by_path(self, relative_path: str) -> list[dict]:
         """Verilen relative_path için Qdrant'taki mevcut agent_doc chunk'larını döndürür."""

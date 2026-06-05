@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 # Execution Plane V2: Güvenlik Membranı
 PATH_BLACKLIST = {".git", ".env", "node_modules", "__pycache__", ".pytest_cache"}
 DANGEROUS_KEYWORDS = {"rm -rf /", "mkfs", "dd if=", "shutdown", ":(){ :|:& };:"}
+BLOCKED_ARGS = frozenset({
+    "-rf", "-fr", "--force", "--no-verify", "--delete", "--hard",
+    "--no-gpg-sign", "--allow-unrelated-histories", "--mirror",
+    "--delete-before", "-fdelete", "--force-delete",
+})
 
 @dataclass
 class ExecutionResult:
@@ -53,7 +58,18 @@ class CommandRunner:
             if any(blacklisted in cwd_path for blacklisted in PATH_BLACKLIST):
                 raise ValueError(f"⚠️ Yasaklı dizin erişimi: {cwd_path} üzerinde komut çalıştırılamaz.")
 
-        # 3. Python Syntax Check (Eğer python komutuysa)
+        # 3. Argument-level blocked flag kontrolü
+        try:
+            parts = shlex.split(command)
+            for arg in parts[1:]:
+                if arg in BLOCKED_ARGS:
+                    raise ValueError(f"⚠️ Yasaklı argüman: '{arg}' kullanımına izin verilmiyor")
+        except ValueError:
+            raise
+        except Exception:
+            pass
+
+        # 4. Python Syntax Check (Eğer python komutuysa)
         if "python" in cmd_lower and "-c" in cmd_lower:
             try:
                 # -c den sonraki tırnak içindeki kodu bulmaya çalış
