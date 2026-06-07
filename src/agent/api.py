@@ -246,6 +246,18 @@ def create_app() -> FastAPI:
         tasks = await sm.get_task_history(collection.lower(), limit)
         return {"tasks": tasks, "count": len(tasks)}
 
+    # ── Metrikler ─────────────────────────────────────────────────────────
+
+    @app.get("/v1/agent/metrics")
+    async def get_metrics(recent: int = Query(default=0, le=200)):
+        from src.agent.metrics import get_metrics_collector
+        from src.agent.resilience import all_breaker_stats
+        collector = get_metrics_collector()
+        result: dict = {"summary": collector.summary(), "circuit_breakers": all_breaker_stats()}
+        if recent > 0:
+            result["recent"] = collector.recent(recent)
+        return result
+
     # ── Eski MCP endpoint uyumluluğu ──────────────────────────────────────
     # /agent/tasks ← eski client'lar için alias
     @app.get("/agent/tasks")
