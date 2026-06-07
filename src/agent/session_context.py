@@ -53,6 +53,9 @@ class SessionContext:
     reflection_notes: str  = ""
     commit_hash:      str  = ""
 
+    # Patch memory örnekleri (PATCH_MEMORY_ENABLED=true ise CONTEXT adımında doldurulur)
+    patch_examples:   list[dict] = field(default_factory=list)
+
     # Meta
     tokens_used:      int   = 0
     created_at:       float = field(default_factory=time.time)

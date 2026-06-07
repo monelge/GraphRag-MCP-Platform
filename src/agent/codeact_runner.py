@@ -208,10 +208,33 @@ class CodeActRunner:
                 assembly = await self._ctx_asm.assemble(spec, ctx, decision.token_budget, widen)
                 ctx.tokens_used += assembly.tokens_used
                 cp.opened_files = [c["file_path"] for c in assembly.code_chunks]
+
+                # Patch memory recall (PATCH_MEMORY_ENABLED=true ise)
+                if os.getenv("PATCH_MEMORY_ENABLED", "false").lower() == "true" and spec:
+                    try:
+                        from src.agent.patch_memory import get_patch_memory_store
+                        examples = await get_patch_memory_store().recall_similar(
+                            goal=config.goal,
+                            task_type=spec.task_type,
+                            language=getattr(spec, "language_hint", "python") or "python",
+                            collection=config.collection,
+                            limit=2,
+                        )
+                        if examples:
+                            ctx.patch_examples = [
+                                {"goal": r.goal, "patch": r.patch_content[:500],
+                                 "tier": r.tier, "task_type": r.task_type}
+                                for r in examples
+                            ]
+                            logger.info("PatchMemory: %d örnek bulundu", len(examples))
+                    except Exception as _pm_exc:
+                        logger.debug("PatchMemory recall atlandı: %s", _pm_exc)
+
                 cp.step = TDADStep.EDIT.value
                 await self._checkpoint(cp, ctx)
                 yield StepEvent(step="CONTEXT", status="completed",
-                                data={"chunks": len(assembly.code_chunks), "tokens": assembly.tokens_used})
+                                data={"chunks": len(assembly.code_chunks), "tokens": assembly.tokens_used,
+                                      "patch_examples": len(ctx.patch_examples)})
                 step = TDADStep.EDIT
 
             # ── EDIT ──────────────────────────────────────────────────────
@@ -333,6 +356,30 @@ class CodeActRunner:
                 # Başarı memory'ye yaz
                 await self._esc.record_success(esc_state, config.goal, self._mcp)
                 await self._sm.update_task_status(config.task_id, "COMPLETED")
+
+                # Patch memory'ye kaydet (PATCH_MEMORY_ENABLED=true ise)
+                if os.getenv("PATCH_MEMORY_ENABLED", "false").lower() == "true":
+                    if ctx.edit_patch and commit_hash:
+                        try:
+                            from src.agent.patch_memory import PatchRecord, get_patch_memory_store
+                            await get_patch_memory_store().store_patch(PatchRecord(
+                                task_id=config.task_id,
+                                goal=config.goal,
+                                task_type=spec.task_type if spec else "unknown",
+                                language=getattr(spec, "language_hint", "python") or "python" if spec else "python",
+                                patch_content=ctx.edit_patch,
+                                affected_files=spec.affected_files if spec else [],
+                                affected_symbols=spec.affected_symbols if spec else [],
+                                acceptance_criteria=spec.acceptance_criteria if spec else [],
+                                tier=esc_state.current_tier.value,
+                                reflection_count=esc_state.reflection_count,
+                                commit_hash=commit_hash,
+                                verify_output=ctx.verify_output,
+                                collection=config.collection,
+                            ))
+                            logger.info("PatchMemory: patch kaydedildi (task=%s)", config.task_id)
+                        except Exception as _pm_exc:
+                            logger.warning("PatchMemory store atlandı: %s", _pm_exc)
 
                 yield StepEvent(step="COMMIT", status="completed",
                                 data={"commit": commit_hash})

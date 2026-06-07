@@ -89,3 +89,32 @@ class MCPBridge:
             changed_paths=changed_paths,
             collection=collection,
         )
+
+    async def recall_patch_examples(
+        self,
+        goal:       str,
+        task_type:  str = "",
+        collection: str = "",
+        limit:      int = 3,
+    ) -> list[dict]:
+        """PATCH_MEMORY_ENABLED=true ise benzer geçmiş patch örneklerini döner."""
+        import os
+        if os.getenv("PATCH_MEMORY_ENABLED", "false").lower() != "true":
+            return []
+        try:
+            from src.agent.patch_memory import get_patch_memory_store
+            records = await get_patch_memory_store().recall_similar(
+                goal=goal,
+                task_type=task_type,
+                language="python",
+                collection=collection,
+                limit=limit,
+            )
+            return [
+                {"goal": r.goal, "patch": r.patch_content[:500],
+                 "tier": r.tier, "task_type": r.task_type}
+                for r in records
+            ]
+        except Exception as exc:
+            logger.debug("recall_patch_examples hatası: %s", exc)
+            return []
