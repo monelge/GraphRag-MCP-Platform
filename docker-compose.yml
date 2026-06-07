@@ -226,6 +226,40 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── ARQ Background Worker ─────────────────────────────────────────────────
+  agent-worker:
+    build: .
+    container_name: graph-mcp-agent-worker
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - graphmcp-net
+    environment:
+      - TZ=Europe/Istanbul
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://graphmcp:${POSTGRES_PASSWORD}@postgres:5432/graphmcp
+      - POSTGRES_DSN=postgresql://graphmcp:${POSTGRES_PASSWORD}@postgres:5432/graphmcp
+      - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-WareLogisticcBYS}
+      - WORKER_GC_INTERVAL_S=3600
+      - WORKER_SESSION_GC_S=3600
+      - WORKER_MEMORY_CYCLE_S=86400
+      - PROJECT_REGISTRY_PATH=/app/data/project_registry.json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - WORKSPACE_BASE_PATH=${WORKSPACE_BASE_PATH:-/var/lib/graphrag/workspaces}
+      - SNAPSHOT_RETENTION_HOURS=${SNAPSHOT_RETENTION_HOURS:-24}
+      - MAX_SNAPSHOTS_PER_PROJECT=${MAX_SNAPSHOTS_PER_PROJECT:-20}
+      - NO_PROXY=localhost,127.0.0.1,redis,postgres
+      - no_proxy=localhost,127.0.0.1,redis,postgres
+    volumes:
+      - ${HOST_APP_ROOT}/src:/app/src
+      - ${HOST_APP_ROOT}/data/graphmcp:/app/data
+      - agent-workspaces:/var/lib/graphrag/workspaces
+    entrypoint: ["python3", "-m", "arq", "src.agent.task_worker.WorkerSettings"]
+
   # ── OpenAI API Gateway Bridge ──────────────────────────────────────────────
   openai-bridge:
     build: .

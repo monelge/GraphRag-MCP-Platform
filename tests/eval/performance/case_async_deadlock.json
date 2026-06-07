@@ -1,0 +1,12 @@
+{
+  "id": "perf_003",
+  "category": "performance",
+  "query": "Traceback asyncio deadlock await coroutine inside sync function RuntimeError",
+  "collection": "warelogisticcbys",
+  "expected_files": [],
+  "expected_context_keywords": ["asyncio", "await", "async def", "event_loop", "run_until_complete"],
+  "expected_symbols": [],
+  "complexity_tier": "TIER_REASON",
+  "min_results": 0,
+  "description": "Async deadlock — stack trace içerdiği için TIER_REASON bekleniyor"
+}

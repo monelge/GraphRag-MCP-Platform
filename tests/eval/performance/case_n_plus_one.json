@@ -1,0 +1,12 @@
+{
+  "id": "perf_001",
+  "category": "performance",
+  "query": "N+1 query problemi nerede? Kullanıcı listesi çekilirken çok yavaş",
+  "collection": "warelogisticcbys",
+  "expected_files": [],
+  "expected_context_keywords": ["Include", "ToList", "lazy loading", "eager", "select_related", "prefetch_related"],
+  "expected_symbols": [],
+  "complexity_tier": "TIER_CHEAP",
+  "min_results": 0,
+  "description": "ORM lazy loading N+1 sorunu tespiti"
+}

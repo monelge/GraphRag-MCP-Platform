@@ -1,0 +1,12 @@
+{
+  "id": "ref_001",
+  "category": "refactor",
+  "query": "PostgreSQL store sınıfını refactor et, god class sorunu var 500 satır",
+  "collection": "warelogisticcbys",
+  "expected_files": ["src/storage/postgres_store.py"],
+  "expected_context_keywords": ["class", "def ", "async def", "PostgresStore"],
+  "expected_symbols": ["PostgresStore"],
+  "complexity_tier": "TIER_REASON",
+  "min_results": 1,
+  "description": "God class refactor — yüksek karmaşıklık, architecture keyword"
+}

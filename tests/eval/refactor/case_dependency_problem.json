@@ -1,0 +1,12 @@
+{
+  "id": "ref_002",
+  "category": "refactor",
+  "query": "circular import bağımlılık sorunu, modüller birbirini import ediyor",
+  "collection": "warelogisticcbys",
+  "expected_files": [],
+  "expected_context_keywords": ["import", "from", "circular", "dependency"],
+  "expected_symbols": [],
+  "complexity_tier": "TIER_CHEAP",
+  "min_results": 0,
+  "description": "Circular dependency tespiti ve çözümü"
+}

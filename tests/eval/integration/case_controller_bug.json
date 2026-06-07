@@ -1,0 +1,12 @@
+{
+  "id": "int_002",
+  "category": "integration",
+  "query": "agent-api /v1/agent/run endpoint 500 hatası veriyor, task_id dönmüyor",
+  "collection": "warelogisticcbys",
+  "expected_files": ["src/agent/api.py", "src/agent/codeact_runner.py"],
+  "expected_context_keywords": ["RunRequest", "StreamingResponse", "task_id", "lifespan", "500"],
+  "expected_symbols": ["create_app", "run_task", "CodeActRunner"],
+  "complexity_tier": "TIER_CHEAP",
+  "min_results": 1,
+  "description": "Agent API controller hatası — endpoint 500 döndürüyor"
+}

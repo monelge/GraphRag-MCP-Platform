@@ -20,3 +20,4 @@ opentelemetry-sdk>=1.24.0
 opentelemetry-exporter-otlp-proto-grpc>=1.24.0
 prometheus-client>=0.20.0
 
+arq>=0.25.0

@@ -1,0 +1,12 @@
+{
+  "id": "sec_001",
+  "category": "security",
+  "query": "JWT token doğrulama açığı var, imza kontrol edilmiyor olabilir",
+  "collection": "warelogisticcbys",
+  "expected_files": [],
+  "expected_context_keywords": ["jwt", "token", "verify", "signature", "decode", "secret", "auth"],
+  "expected_symbols": [],
+  "complexity_tier": "TIER_REASON",
+  "min_results": 0,
+  "description": "JWT güvenlik açığı — security keyword TIER_REASON'a iter"
+}

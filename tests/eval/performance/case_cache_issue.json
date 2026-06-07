@@ -1,0 +1,12 @@
+{
+  "id": "perf_002",
+  "category": "performance",
+  "query": "Redis cache hit rate düşük, her istek veritabanına gidiyor",
+  "collection": "warelogisticcbys",
+  "expected_files": ["src/storage/redis_store.py"],
+  "expected_context_keywords": ["cache", "redis", "TTL", "setex", "get_raw", "set_raw"],
+  "expected_symbols": ["RedisStore", "get_retrieval", "set_retrieval"],
+  "complexity_tier": "TIER_CHEAP",
+  "min_results": 1,
+  "description": "Redis cache miss sorunu — store implementasyonu"
+}
