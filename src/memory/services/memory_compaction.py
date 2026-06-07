@@ -1,7 +1,7 @@
 import logging
 import time
 from typing import List, Dict, Any, Optional
-from src.shared.llm_client import get_llm_client
+from src.control.models.gateway import ModelGateway
 from src.storage.episodic_store import EpisodicStore, MemoryEntry
 
 logger = logging.getLogger(__name__)
@@ -9,8 +9,9 @@ logger = logging.getLogger(__name__)
 class MemoryCompactor:
     """Bellek kaydı birleştirici — benzer kayıtları özet hale getir."""
     
-    def __init__(self, episodic_store: EpisodicStore):
+    def __init__(self, episodic_store: EpisodicStore, model_gateway: ModelGateway = None):
         self.store = episodic_store
+        self._gw = model_gateway or ModelGateway()
 
     async def compact(self, collection: str, query: str = "*", threshold: float = 0.85):
         """
@@ -71,7 +72,6 @@ class MemoryCompactor:
 
         context = "\n---\n".join([f"Kayıt: {c.get('name', 'İsimsiz')}\nİçerik: {c.get('code', '')}" for c in results])
 
-        client = get_llm_client()
         prompt = (
             "Aşağıdaki ham 'episodic' hafıza loglarını incele.\n"
             "Bunlardan, sistemin gelecekte kullanabileceği net, kısa ve kalıcı kurallar (Atomic Facts) çıkar.\n"
@@ -79,8 +79,8 @@ class MemoryCompactor:
             "Yanıtını her bir gerçek için bir satır olacak şekilde DÜZ METİN (maddeler halinde) dön. Başka hiçbir şey yazma."
         )
 
-        response = await client.chat.completions.create(
-            model="openai/gpt-4o-mini",
+        response = await self._gw.chat_completion(
+            task="fact_extract",
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"Ham Loglar:\n{context}"}
@@ -115,9 +115,8 @@ class MemoryCompactor:
         """LLM kullanarak birden fazla kaydı tek bir tutarlı metne dönüştürür."""
         context = "\n---\n".join([f"Başlık: {c['name']}\nİçerik: {c['code']}" for c in candidates])
 
-        client = get_llm_client()
-        response = await client.chat.completions.create(
-            model="openai/gpt-4o-mini",
+        response = await self._gw.chat_completion(
+            task="memory_compact",
             messages=[
                 {"role": "system", "content": "Sana verilen benzer bellek kayıtlarını, bilgi kaybı olmadan tek bir tutarlı ve öz metne dönüştür. Tekrar eden kısımları temizle."},
                 {"role": "user", "content": f"Birleştirilecek Kayıtlar:\n{context}"}

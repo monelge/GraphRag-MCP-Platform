@@ -15,6 +15,17 @@ from src.mcp.server import _app_ctx, _retrieval, _memory, _model_gateway
 from src.shared.logging_config import get_logger, setup_logging
 from src.shared.config import config
 
+# OpenAI model isimlerini ucuz OpenRouter modellerine yönlendir
+_MODEL_REMAP = {
+    "gpt-4":               None,  # reasoning_model kullan
+    "gpt-4o":              None,
+    "gpt-4-turbo":         None,
+    "gpt-4o-mini":         "budget",   # budget_model kullan
+    "gpt-3.5-turbo":       "budget",
+    "graph-mcp":           "analysis", # analysis_model kullan
+    "default":             "analysis",
+}
+
 setup_logging()
 logger = get_logger(__name__)
 
@@ -222,9 +233,16 @@ async def chat_completions(req: ChatCompletionRequest, request: Request):
     logger.info("Forwarding request to LLM provider", extra={"model": req.model})
     
     # We resolve the model. If user requests 'graph-mcp' or a placeholder, we use the default analysis model.
-    model_to_use = req.model
-    if model_to_use in ("graph-mcp", "default"):
+    # Pahalı OpenAI modellerini ucuz OpenRouter karşılıklarına yönlendir
+    tier = _MODEL_REMAP.get(req.model)
+    if tier == "budget":
+        model_to_use = config.budget_model
+    elif tier == "analysis":
         model_to_use = config.analysis_model
+    elif tier is None and req.model in _MODEL_REMAP:
+        model_to_use = config.reasoning_model
+    else:
+        model_to_use = req.model
         
     try:
         completion_params = {

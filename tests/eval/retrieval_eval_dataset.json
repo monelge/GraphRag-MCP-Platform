@@ -1,0 +1,111 @@
+[
+  {
+    "id": "ret_001",
+    "query": "PostgreSQL bağlantı havuzu nasıl başlatılır",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/storage/postgres_store.py"],
+    "expected_symbols": ["PostgresStore", "connect"],
+    "min_results": 1,
+    "description": "Temel depolama katmanı başlatma"
+  },
+  {
+    "id": "ret_002",
+    "query": "complexity router model tier seçimi",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/control/models/complexity_router.py"],
+    "expected_symbols": ["ComplexityRouter", "ModelTier", "route"],
+    "min_results": 1,
+    "description": "Complexity router tier routing mantığı"
+  },
+  {
+    "id": "ret_003",
+    "query": "agent task checkpoint save load",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/agent/state_machine.py"],
+    "expected_symbols": ["AgentStateMachine", "AgentCheckpoint"],
+    "min_results": 1,
+    "description": "State machine checkpoint CRUD"
+  },
+  {
+    "id": "ret_004",
+    "query": "Qdrant vektör upsert embedding",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/storage/qdrant_store.py"],
+    "expected_symbols": ["upsert", "search"],
+    "min_results": 1,
+    "description": "Qdrant vektör depolama işlemleri"
+  },
+  {
+    "id": "ret_005",
+    "query": "MCP tool kayıt fonksiyon listesi",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/mcp/tool_registry.py"],
+    "expected_symbols": ["search_code", "index_project"],
+    "min_results": 2,
+    "description": "MCP araç kayıt sistemi"
+  },
+  {
+    "id": "ret_006",
+    "query": "Traceback TypeError NoneType object is not subscriptable",
+    "collection": "warelogisticcbys",
+    "expected_files": [],
+    "expected_symbols": [],
+    "min_results": 0,
+    "complexity_tier": "TIER_REASON",
+    "description": "Stack trace içeren sorgular TIER_REASON seçmeli"
+  },
+  {
+    "id": "ret_007",
+    "query": "bellek sıkıştırma memory compaction",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/memory/services/memory_compaction.py"],
+    "expected_symbols": ["compact", "compaction"],
+    "min_results": 1,
+    "description": "Bellek sıkıştırma servisi"
+  },
+  {
+    "id": "ret_008",
+    "query": "escalation manager reflection tier yükseltme",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/control/models/escalation_manager.py"],
+    "expected_symbols": ["EscalationManager", "decide"],
+    "min_results": 1,
+    "description": "Escalation decision logic"
+  },
+  {
+    "id": "ret_009",
+    "query": "workspace git worktree create remove prune",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/agent/workspace_manager.py"],
+    "expected_symbols": ["WorkspaceManager", "create", "remove"],
+    "min_results": 1,
+    "description": "Workspace izolasyon yönetimi"
+  },
+  {
+    "id": "ret_010",
+    "query": "OpenRouter gateway model yönlendirme",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/control/models/gateway.py"],
+    "expected_symbols": [],
+    "min_results": 1,
+    "description": "OpenRouter gateway LLM yönlendirme"
+  },
+  {
+    "id": "ret_011",
+    "query": "SSE streaming event endpoint FastAPI",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/agent/api.py"],
+    "expected_symbols": ["StreamingResponse", "event_stream"],
+    "min_results": 1,
+    "description": "Agent API SSE streaming endpoint"
+  },
+  {
+    "id": "ret_012",
+    "query": "dense embedder text chunking tokenization",
+    "collection": "warelogisticcbys",
+    "expected_files": ["src/indexing/embedders/dense_embedder.py"],
+    "expected_symbols": ["embed", "chunk"],
+    "min_results": 1,
+    "description": "Dense embedding ve text chunking"
+  }
+]

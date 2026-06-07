@@ -25,3 +25,4 @@ dmypy.json
 build/
 dist/
 *.egg-info/
+.aider*

@@ -141,6 +141,12 @@ def lazy_connect(func):
 
     @functools.wraps(func)
     async def wrapper(self, *args, **kwargs):
+        # Kapalı pool'u temizle — InterfaceError: pool is closed
+        if self._pool is not None:
+            try:
+                self._pool._check_init()
+            except Exception:
+                self._pool = None
         if not self._pool:
             try:
                 await self.connect()
