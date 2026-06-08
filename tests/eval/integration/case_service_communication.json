@@ -1,0 +1,12 @@
+{
+  "id": "int_001",
+  "category": "integration",
+  "query": "MCP SSE bağlantısı kesildi, graph-mcp servisi agent-api ile konuşamıyor",
+  "collection": "warelogisticcbys",
+  "expected_files": ["src/agent/mcp_bridge.py"],
+  "expected_context_keywords": ["SSE", "connect", "transport", "bridge", "tool_registry"],
+  "expected_symbols": ["MCPBridge"],
+  "complexity_tier": "TIER_CHEAP",
+  "min_results": 1,
+  "description": "Servisler arası iletişim sorunu — MCP bridge"
+}

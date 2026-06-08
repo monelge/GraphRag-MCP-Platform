@@ -29,7 +29,6 @@ from src.retrieval.search.hybrid_search import (
 from src.retrieval.search.hyde import expand_query as hyde_expand, hyde_retrieve
 from src.retrieval.search.local_search import LocalSearcher
 from src.retrieval.search.query_classifier import TOP_K_BY_TYPE, classify as classify_query, should_rewrite
-from src.shared.llm_client import get_llm_client
 
 
 class RetrievalHandler:
@@ -46,7 +45,7 @@ class RetrievalHandler:
         rewrite_query: bool | None = None,
     ) -> str:
         """Tam retrieval pipeline ile kod araması yapar."""
-        collection = collection or config.default_collection
+        collection = (collection or config.default_collection).lower()
         t0 = time.monotonic()
         budget = RequestBudget()
         query_type = classify_query(query)
@@ -91,11 +90,10 @@ class RetrievalHandler:
         if do_rewrite:
             try:
                 budget.consume_aux_llm("query_rewrite_or_hyde")
-                client = get_llm_client()
                 with tracer.step("hyde"):
                     expansions = await hyde_expand(
                         query,
-                        llm_client=client,
+                        llm_client=self.ctx.model_gateway.client,
                         model=get_model("query_rewrite"),
                     )
                     tracer.record("hyde", item_count=len(expansions))
@@ -307,7 +305,7 @@ class RetrievalHandler:
     async def explain_code(self, query: str, collection: str = "", top_k: int = 5) -> str:
         """Kod bloklarını hibrit arama + LLM analizi ile açıklar."""
         t0 = time.monotonic()
-        collection = collection or config.default_collection
+        collection = (collection or config.default_collection).lower()
         query_type = classify_query(query)
 
         searcher = HybridSearcher(collection=collection, redis_store=self.ctx.redis)
@@ -370,9 +368,8 @@ class RetrievalHandler:
             ]
         )
 
-        client = get_llm_client()
-        response = await client.chat.completions.create(
-            model=model,
+        response = await self.ctx.model_gateway.chat_completion(
+            task=model_task,
             messages=[
                 {
                     "role": "system",
@@ -454,7 +451,7 @@ class RetrievalHandler:
     ) -> str:
         """Repo summary chunk'ları üzerinden mimari arama yapar."""
         t0 = time.monotonic()
-        collection = collection or config.default_collection
+        collection = (collection or config.default_collection).lower()
         architecture_filter = QFilter(
             must=[QFC(key="source_type", match=QMV(value="repo_summary"))]
         )

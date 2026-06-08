@@ -112,7 +112,7 @@ class IndexingHandler:
 
     @staticmethod
     def project_collection_name(project_path: str) -> str:
-        return Path(project_path).resolve().name.replace(" ", "_")
+        return Path(project_path).resolve().name.replace(" ", "_").lower()
 
     @staticmethod
     def normalize_changed_files(
@@ -219,7 +219,9 @@ class IndexingHandler:
 
         indexed_count = 0
         total_chunks_processed = 0
-        
+        total_files = len(remaining_files)
+        _index_start = time.monotonic()
+
         # Dosyaları gruplar halinde işle (Bellek ve performans optimizasyonu)
         file_batch_size = 50
         for i in range(0, len(remaining_files), file_batch_size):
@@ -270,7 +272,23 @@ class IndexingHandler:
                     logger.error("Embedding/Qdrant hatası (batch %s): %s", i // file_batch_size, exc)
             
             total_chunks_processed += len(batch_chunks)
-            logger.info("Batch tamamlandı: %s/%s dosya", i + len(file_batch), len(remaining_files))
+            done_files = i + len(file_batch)
+            pct = done_files / total_files * 100
+            elapsed = time.monotonic() - _index_start
+            eta_s = int((elapsed / done_files) * (total_files - done_files)) if done_files else 0
+            eta_str = f"{eta_s // 60}dk {eta_s % 60}s" if eta_s >= 60 else f"{eta_s}s"
+            logger.info(
+                "İndeksleme ilerliyor: %d/%d dosya (%%%.1f) | %d chunk | ETA: %s",
+                done_files, total_files, pct, indexed_count, eta_str,
+                extra={
+                    "indexed_files": done_files,
+                    "total_files": total_files,
+                    "pct": round(pct, 1),
+                    "indexed_chunks": indexed_count,
+                    "eta": eta_str,
+                    "collection": collection,
+                }
+            )
 
         if total_chunks_processed == 0:
             return "⚠️ İndekslenecek kaynak dosyası bulunamadı veya işlenemedi."
@@ -500,7 +518,7 @@ class IndexingHandler:
         doc_priority: str | None = None,
     ) -> str:
         """Sadece agent_doc chunk'larında hibrit arama yapar."""
-        collection = collection or config.default_collection
+        collection = (collection or config.default_collection).lower()
         cache_key = f"{query}|layer={layer}|priority={doc_priority}"
         t0 = time.monotonic()
         cached = await self.ctx.redis.get_retrieval(collection, cache_key)

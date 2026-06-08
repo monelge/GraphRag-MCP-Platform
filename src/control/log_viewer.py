@@ -220,6 +220,7 @@ async def api_logs(page: int = 1, per_page: int = 200, level: str = "", search: 
                     if sf and sf not in json.dumps(e).lower(): continue
                     entries.append(e)
         except Exception: pass
+    entries.reverse()  # Yeniden eskiye — en son log en üstte
     total = len(entries)
     start = (page - 1) * per_page
     return JSONResponse({
@@ -537,7 +538,7 @@ button{cursor:pointer;}
       <!-- Table header -->
       <div style="flex-shrink:0;display:grid;grid-template-columns:68px 56px 100px 1fr 110px 72px 60px;gap:0;padding:5px 12px;background:var(--s2);border-bottom:1px solid var(--bd);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--mu);">
         <span>Seviye</span>
-        <span>Saat</span>
+        <span>Tarih/Saat</span>
         <span>Modül</span>
         <span>Mesaj</span>
         <span>Collection</span>
@@ -574,7 +575,7 @@ button{cursor:pointer;}
       <!-- Table header -->
       <div style="flex-shrink:0;display:grid;grid-template-columns:80px 56px 100px 1fr 110px 72px 60px;gap:0;padding:5px 12px;background:var(--s2);border-bottom:1px solid var(--bd);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--mu);">
         <span>Seviye</span>
-        <span>Saat</span>
+        <span>Tarih/Saat</span>
         <span>Modül</span>
         <span>Mesaj / Hata Detayı</span>
         <span>Collection</span>
@@ -613,7 +614,7 @@ button{cursor:pointer;}
       <div id="dk-cards" style="flex-shrink:0;display:flex;flex-wrap:wrap;gap:8px;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--bd);"></div>
       <!-- Table header -->
       <div id="dk-thead" style="flex-shrink:0;display:none;grid-template-columns:68px 56px 100px 1fr 110px 72px 60px;gap:0;padding:5px 12px;background:var(--s2);border-bottom:1px solid var(--bd);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--mu);">
-        <span>Seviye</span><span>Saat</span><span>Modül</span><span>Mesaj</span><span>Collection</span><span style="text-align:right;">Süre</span><span style="text-align:right;">Tool</span>
+        <span>Seviye</span><span>Tarih/Saat</span><span>Modül</span><span>Mesaj</span><span>Collection</span><span style="text-align:right;">Süre</span><span style="text-align:right;">Tool</span>
       </div>
       <!-- Log rows -->
       <div id="dk-box" style="flex:1;overflow-y:auto;"></div>
@@ -718,8 +719,43 @@ let ALL=[], FIL=[], ES=null, RETRIES=0, LV_F='INFO', TOOL_F='';
 const LO={DEBUG:0,INFO:1,WARNING:2,ERROR:3,CRITICAL:4};
 let lastStats = null;
 
+// ── Timestamp formatter — tarih + saat ────────────────────────────────────────
+function fmtTs(ts){
+  if(!ts) return '--:--';
+  const d=new Date(ts);
+  if(isNaN(d)) return ts.slice(0,19).replace('T',' ');
+  const dd=String(d.getDate()).padStart(2,'0');
+  const mo=String(d.getMonth()+1).padStart(2,'0');
+  const HH=String(d.getHours()).padStart(2,'0');
+  const MM=String(d.getMinutes()).padStart(2,'0');
+  const SS=String(d.getSeconds()).padStart(2,'0');
+  return `${dd}.${mo} ${HH}:${MM}:${SS}`;
+}
+
+// ── Flood/startup log deduplication ───────────────────────────────────────────
+// Startup mesajları aynı oturumda 1 kez gösterilir, sonrasında bastırılır
+const DEDUP_ONCE_MSGS = [
+  'logging başlatıldı','logging configured',
+  'opentelemetry başlatıldı','telemetry initialized',
+  'mcp server başlatılıyor','mcp server started','application startup complete',
+  'uvicorn running','started server process','waiting for application startup',
+];
+const DEDUP_WIN  = 300000; // 5 dk içinde aynı mesaj tekrarsa atla
+const _dedupSeen = {};
+function isDuplicate(d){
+  const msg=(d.msg||'').toLowerCase();
+  const key=(d.logger||'')+':'+msg;
+  const now=Date.now();
+  // Startup noise: ilk gösterimde kaydet, tekrarında bastır
+  const isNoise = DEDUP_ONCE_MSGS.some(m=>msg.includes(m));
+  const win = isNoise ? DEDUP_WIN : 0; // noise için 5dk, diğerleri için dedup yok
+  if(win>0 && _dedupSeen[key] && (now-_dedupSeen[key])<win) return true;
+  if(win>0) _dedupSeen[key]=now;
+  return false;
+}
+
 // ── Clock ──────────────────────────────────────────────────────────────────────
-setInterval(()=>{ const e=document.getElementById('clk'); if(e) e.textContent=new Date().toLocaleTimeString('tr-TR'); },1000);
+setInterval(()=>{ const e=document.getElementById('clk'); if(e) e.textContent=fmtTs(new Date().toISOString()); },1000);
 
 // ── Tab switch ─────────────────────────────────────────────────────────────────
 const TAB_IDS = ['logs','metrics','tools','allogs','errors','docker'];
@@ -776,7 +812,14 @@ function setBadge(s){
   b.style.cssText=`font-size:11px;font-weight:700;padding:3px 11px;border-radius:20px;flex-shrink:0;background:${bg};color:${col};border:1px solid ${bdr};`;
   d.style.background=dot;
 }
-function reconnect(){ ALL=[]; FIL=[]; document.getElementById('logbox').innerHTML=''; updCnt(); connect(); }
+function reconnect(){
+  ALL=[]; FIL=[];
+  // Dedup cache'i temizle — yoksa replay edilen loglar hep bloklanır
+  Object.keys(_dedupSeen).forEach(k=>delete _dedupSeen[k]);
+  document.getElementById('logbox').innerHTML='';
+  updCnt();
+  connect();
+}
 
 // ── Entry push & render ────────────────────────────────────────────────────────
 function push(d){
@@ -792,18 +835,31 @@ function ok(d){
   if(cf && !(d.collection||'').toLowerCase().includes(cf)) return false;
   const sf=(document.getElementById('srch').value||document.getElementById('top-search').value||'').toLowerCase();
   if(sf && !JSON.stringify(d).toLowerCase().includes(sf)) return false;
+  if(isDuplicate(d)) return false;
   return true;
 }
 
 function drawTo(box,d){
   const lv=(d.level||'INFO').toUpperCase();
-  const ts=d.ts?new Date(d.ts).toLocaleTimeString('tr-TR'):'--:--';
+  const ts=fmtTs(d.ts);
   const lg=d.logger?d.logger.split('.').pop().slice(0,14):'';
   const msg=(d.msg||'').replace(/</g,'&lt;');
 
   let tags='';
   if(d.collection) tags+=`<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid rgba(57,211,83,.22);color:var(--teal);margin-right:3px;">${d.collection}</span>`;
   if(d.query)      tags+=`<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid rgba(220,205,170,.2);color:#dcdcaa;margin-right:3px;max-width:130px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;">🔍 ${String(d.query).slice(0,32)}</span>`;
+  if(d.model){
+    const mn=String(d.model).split('/').pop().replace(':free','').slice(0,22);
+    tags+=`<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid rgba(139,92,246,.3);color:#a78bfa;margin-right:3px;">🤖 ${mn}</span>`;
+  }
+  if(d.pct!=null){
+    const pct=Number(d.pct);
+    const clr=pct>=100?'var(--green)':pct>=50?'var(--blue)':'var(--yellow)';
+    tags+=`<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid rgba(255,255,255,.12);color:${clr};margin-right:3px;">📦 ${d.indexed_files||'?'}/${d.total_files||'?'} dosya %${pct}</span>`;
+  }
+  if(d.eta){
+    tags+=`<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid rgba(255,255,255,.1);color:var(--mu);margin-right:3px;">⏳ ${d.eta}</span>`;
+  }
   if(d.duration_ms){ const slow=+d.duration_ms>2000; tags+=`<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid ${slow?'rgba(240,136,62,.3)':'rgba(63,185,80,.2)'};color:${slow?'var(--orange)':'var(--green)'};margin-right:3px;">⏱ ${d.duration_ms}ms</span>`; }
   if(d.project_path){ const sh=String(d.project_path).split('/').pop(); tags+=`<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;border:1px solid var(--bd);color:var(--mu);margin-right:3px;">${sh}</span>`; }
 
@@ -935,7 +991,7 @@ function fillErrors(errs, id){
     <div style="padding:6px 0;border-bottom:1px solid var(--bd);">
       <div style="font-size:11px;font-weight:700;color:var(--red);">${e.level} · ${e.tool||'?'}</div>
       <div style="font-size:11px;color:var(--mu);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(e.msg||'').replace(/</g,'&lt;')}</div>
-      <div style="font-size:10px;color:#444;">${e.ts?new Date(e.ts).toLocaleTimeString('tr-TR'):''}</div>
+      <div style="font-size:10px;color:#444;">${e.ts?fmtTs(e.ts):''}</div>
     </div>`).join('');
 }
 
@@ -1007,11 +1063,11 @@ async function fillTools(){
 let AL_PAGE=1, AL_TOTAL=0, AL_PAGES=1, AL_DATA=[];
 
 // Tablo satırı — Tüm Loglar ve Hatalar tabları için ortak renderer
-const AL_COLS = '68px 56px 100px 1fr 110px 72px 60px';
+const AL_COLS = '68px 104px 100px 1fr 110px 72px 60px';
 
 function drawTableRow(box, d, cols){
   const lv  = (d.level||'INFO').toUpperCase();
-  const ts  = d.ts ? new Date(d.ts).toLocaleTimeString('tr-TR') : '--:--';
+  const ts  = fmtTs(d.ts);
   const lg  = d.logger ? d.logger.split('.').pop().slice(0,14) : '';
   const msg = (d.msg||'').replace(/</g,'&lt;');
   const col = d.collection || '';
@@ -1147,7 +1203,8 @@ async function dkInit(){
   try{
     const r = await fetch('/api/containers');
     const d = await r.json();
-    const containers = d.containers || [];
+    // Sadece graph-mcp ile başlayan container'ları göster
+    const containers = (d.containers || []).filter(c=>c.name.startsWith('graph-mcp'));
 
     // Health cards
     const cards = document.getElementById('dk-cards');

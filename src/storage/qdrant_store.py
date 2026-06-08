@@ -40,7 +40,13 @@ class QdrantStore:
         try:
             existing = await self.client.get_collections()
             names = [c.name for c in existing.collections]
-            if self.collection not in names:
+            # Case-insensitive eşleşme: warelogisticcbys ↔ WareLogisticcBYS
+            match = next((n for n in names if n.lower() == self.collection.lower()), None)
+            if match and match != self.collection:
+                logger.info("Qdrant collection case uyumsuz, mevcut isim kullanılıyor",
+                            extra={"requested": self.collection, "actual": match})
+                self.collection = match
+            if self.collection not in names and not match:
                 logger.info("Qdrant collection yok, oluşturuluyor", extra={"collection": self.collection})
                 await self.client.create_collection(
                     collection_name=self.collection,

@@ -131,7 +131,14 @@ services:
       - LOG_FILE=/app/data/graph-mcp.log
       - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
       - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-WareLogisticcBYS}
-      - ANALYSIS_MODEL=${ANALYSIS_MODEL:-openai/gpt-4o-mini}
+      - ANALYSIS_MODEL=${ANALYSIS_MODEL:-mistralai/mistral-nemo}
+      - BUDGET_MODEL=${BUDGET_MODEL:-mistralai/mistral-nemo}
+      - REASONING_MODEL=${REASONING_MODEL:-google/gemini-2.5-flash}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-mistralai/mistral-nemo}
+      - HOST_PROJECTS_ROOT=${HOST_PROJECTS_ROOT:-/Volumes/MacBook/RiderProjects}
+      - CONTAINER_PROJECTS_ROOT=${CONTAINER_PROJECTS_ROOT:-/projects}
+      - PATH_MAPPINGS=${PATH_MAPPINGS}
       - MCP_TRANSPORT=sse
       - UVICORN_HOST=0.0.0.0
       - UVICORN_PORT=8000
@@ -147,6 +154,111 @@ services:
       - ${HOST_APP_ROOT}/scripts:/app/scripts
       - ${HOST_APP_ROOT}/data/graphmcp:/app/data
     entrypoint: ["python3", "-m", "src.mcp_server"]
+
+  # ── Agent API (TDAD Orchestration) ──────────────────────────────────────────
+  agent-api:
+    build: .
+    container_name: graph-mcp-agent-api
+    restart: unless-stopped
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "0.0.0.0:8001:8001"
+    networks:
+      - graphmcp-net
+    environment:
+      - TZ=Europe/Istanbul
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://graphmcp:${POSTGRES_PASSWORD}@postgres:5432/graphmcp
+      - POSTGRES_DSN=postgresql://graphmcp:${POSTGRES_PASSWORD}@postgres:5432/graphmcp
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-WareLogisticcBYS}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_FILE=/app/data/agent-api.log
+      # Complexity Router
+      - COMPLEXITY_ROUTER_ENABLED=${COMPLEXITY_ROUTER_ENABLED:-true}
+      - TIER_LOCAL_ENABLED=${TIER_LOCAL_ENABLED:-false}
+      - TIER_LOCAL_MODEL=${TIER_LOCAL_MODEL:-qwen2.5-coder:32b}
+      - TIER_LOCAL_BASE_URL=${TIER_LOCAL_BASE_URL:-http://host.docker.internal:11434/v1}
+      - TIER_CHEAP_MODEL=${TIER_CHEAP_MODEL:-google/gemini-2.5-flash}
+      - TIER_REASON_MODEL=${TIER_REASON_MODEL:-anthropic/claude-sonnet-4-6}
+      - CONTEXT_BUDGET_LOCAL=${CONTEXT_BUDGET_LOCAL:-8000}
+      - CONTEXT_BUDGET_CHEAP=${CONTEXT_BUDGET_CHEAP:-16000}
+      - CONTEXT_BUDGET_REASON=${CONTEXT_BUDGET_REASON:-32000}
+      # TDAD
+      - HITL_TIMEOUT_SECONDS=${HITL_TIMEOUT_SECONDS:-300}
+      - CODEACT_MAX_REFLECTIONS=${CODEACT_MAX_REFLECTIONS:-5}
+      - VERIFY_TIMEOUT_SECONDS=${VERIFY_TIMEOUT_SECONDS:-120}
+      - SESSION_CONTEXT_TTL_SECONDS=${SESSION_CONTEXT_TTL_SECONDS:-3600}
+      # Workspace
+      - WORKSPACE_BASE_PATH=${WORKSPACE_BASE_PATH:-/var/lib/graphrag/workspaces}
+      - SNAPSHOT_RETENTION_HOURS=${SNAPSHOT_RETENTION_HOURS:-24}
+      - MAX_SNAPSHOTS_PER_PROJECT=${MAX_SNAPSHOTS_PER_PROJECT:-20}
+      # Feature flags
+      - PATCH_MEMORY_ENABLED=false
+      - SEMANTIC_DIFF_ENABLED=false
+      - HOST_PROJECTS_ROOT=${HOST_PROJECTS_ROOT:-/Volumes/MacBook/RiderProjects}
+      - CONTAINER_PROJECTS_ROOT=${CONTAINER_PROJECTS_ROOT:-/projects}
+      - NO_PROXY=localhost,127.0.0.1,qdrant,neo4j,redis,postgres,graph-mcp
+      - no_proxy=localhost,127.0.0.1,qdrant,neo4j,redis,postgres,graph-mcp
+    volumes:
+      - ${HOST_PROJECTS_ROOT}:${CONTAINER_PROJECTS_ROOT}:ro
+      - ${HOST_APP_ROOT}/src:/app/src
+      - ${HOST_APP_ROOT}/data/graphmcp:/app/data
+      - agent-workspaces:/var/lib/graphrag/workspaces
+    entrypoint: ["python3", "-m", "uvicorn", "src.agent.api:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── ARQ Background Worker ─────────────────────────────────────────────────
+  agent-worker:
+    build: .
+    container_name: graph-mcp-agent-worker
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - graphmcp-net
+    environment:
+      - TZ=Europe/Istanbul
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://graphmcp:${POSTGRES_PASSWORD}@postgres:5432/graphmcp
+      - POSTGRES_DSN=postgresql://graphmcp:${POSTGRES_PASSWORD}@postgres:5432/graphmcp
+      - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-WareLogisticcBYS}
+      - WORKER_GC_INTERVAL_S=3600
+      - WORKER_SESSION_GC_S=3600
+      - WORKER_MEMORY_CYCLE_S=86400
+      - PROJECT_REGISTRY_PATH=/app/data/project_registry.json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - WORKSPACE_BASE_PATH=${WORKSPACE_BASE_PATH:-/var/lib/graphrag/workspaces}
+      - SNAPSHOT_RETENTION_HOURS=${SNAPSHOT_RETENTION_HOURS:-24}
+      - MAX_SNAPSHOTS_PER_PROJECT=${MAX_SNAPSHOTS_PER_PROJECT:-20}
+      - NO_PROXY=localhost,127.0.0.1,redis,postgres
+      - no_proxy=localhost,127.0.0.1,redis,postgres
+    volumes:
+      - ${HOST_APP_ROOT}/src:/app/src
+      - ${HOST_APP_ROOT}/data/graphmcp:/app/data
+      - agent-workspaces:/var/lib/graphrag/workspaces
+    entrypoint: ["python3", "-m", "arq", "src.agent.task_worker.WorkerSettings"]
 
   # ── OpenAI API Gateway Bridge ──────────────────────────────────────────────
   openai-bridge:
@@ -183,7 +295,11 @@ services:
       - LOG_FILE=/app/data/openai-bridge.log
       - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
       - DEFAULT_COLLECTION=${DEFAULT_COLLECTION:-WareLogisticcBYS}
-      - ANALYSIS_MODEL=${ANALYSIS_MODEL:-openai/gpt-4o-mini}
+      - ANALYSIS_MODEL=${ANALYSIS_MODEL:-mistralai/mistral-nemo}
+      - BUDGET_MODEL=${BUDGET_MODEL:-mistralai/mistral-nemo}
+      - REASONING_MODEL=${REASONING_MODEL:-google/gemini-2.5-flash}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-mistralai/mistral-nemo}
       - PROJECT_REGISTRY_PATH=/app/data/project_registry.json
       - NO_PROXY=localhost,127.0.0.1,127.0.0.0/8,::1,192.168.0.0/16,10.0.0.0/8,qdrant,neo4j,redis,postgres,graph-mcp-qdrant,graph-mcp-neo4j,graph-mcp-redis,graph-mcp-postgres
       - no_proxy=localhost,127.0.0.1,127.0.0.0/8,::1,192.168.0.0/16,10.0.0.0/8,qdrant,neo4j,redis,postgres,graph-mcp-qdrant,graph-mcp-neo4j,graph-mcp-redis,graph-mcp-postgres
@@ -256,4 +372,6 @@ networks:
   graphmcp-net:
     driver: bridge
 
-volumes: {}
+volumes:
+  agent-workspaces:
+    driver: local

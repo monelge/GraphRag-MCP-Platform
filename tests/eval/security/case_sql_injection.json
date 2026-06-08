@@ -1,0 +1,12 @@
+{
+  "id": "sec_002",
+  "category": "security",
+  "query": "SQL injection vulnerability kullanıcı girdisi direkt sorguya ekleniyor",
+  "collection": "warelogisticcbys",
+  "expected_files": [],
+  "expected_context_keywords": ["parameterized", "placeholder", "execute", "cursor", "sanitize", "escape"],
+  "expected_symbols": [],
+  "complexity_tier": "TIER_REASON",
+  "min_results": 0,
+  "description": "SQL injection — güvenlik taraması"
+}

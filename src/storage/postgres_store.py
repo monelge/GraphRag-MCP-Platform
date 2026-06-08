@@ -126,6 +126,44 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS idx_ae_event_type ON audit_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_ae_task_id ON audit_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_ae_created_at ON audit_events(created_at);
+
+CREATE TABLE IF NOT EXISTS patch_memories (
+    id               BIGSERIAL PRIMARY KEY,
+    task_id          TEXT NOT NULL,
+    patch_hash       TEXT UNIQUE,
+    task_type        TEXT,
+    language         TEXT,
+    collection       TEXT NOT NULL DEFAULT '',
+    commit_sha       TEXT,
+    affected_files   TEXT[],
+    affected_symbols TEXT[],
+    patch_content    TEXT,
+    tier             TEXT,
+    reflection_count INT DEFAULT 0,
+    created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pm_collection ON patch_memories(collection);
+CREATE INDEX IF NOT EXISTS idx_pm_task_type  ON patch_memories(task_type, language);
+"""
+
+_PATCH_MEMORY_SQL = """
+CREATE TABLE IF NOT EXISTS patch_memories (
+    id               BIGSERIAL PRIMARY KEY,
+    task_id          TEXT NOT NULL,
+    patch_hash       TEXT UNIQUE,
+    task_type        TEXT,
+    language         TEXT,
+    collection       TEXT NOT NULL DEFAULT '',
+    commit_sha       TEXT,
+    affected_files   TEXT[],
+    affected_symbols TEXT[],
+    patch_content    TEXT,
+    tier             TEXT,
+    reflection_count INT DEFAULT 0,
+    created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pm_collection ON patch_memories(collection);
+CREATE INDEX IF NOT EXISTS idx_pm_task_type  ON patch_memories(task_type, language);
 """
 
 _MIGRATIONS = [
@@ -133,6 +171,7 @@ _MIGRATIONS = [
     (2, "Checkpoint and schema migration tables"),
     (3, "LLM model_usage_logs table"),
     (4, "Audit events table"),
+    (5, "Patch memories table"),
 ]
 
 
@@ -141,6 +180,12 @@ def lazy_connect(func):
 
     @functools.wraps(func)
     async def wrapper(self, *args, **kwargs):
+        # Kapalı pool'u temizle — InterfaceError: pool is closed
+        if self._pool is not None:
+            try:
+                self._pool._check_init()
+            except Exception:
+                self._pool = None
         if not self._pool:
             try:
                 await self.connect()

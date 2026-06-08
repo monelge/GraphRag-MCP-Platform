@@ -9,11 +9,11 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 COPY requirements.txt .
 
-# 1. CPU-only torch (CUDA kutuphane yuklememek icin)
-RUN pip install --no-cache-dir     torch==2.4.1+cpu     --index-url https://download.pytorch.org/whl/cpu
+# 1. CPU-only torch (arm64/amd64 uyumlu en son kararlı sürüm)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
-# 2. transformers pinle (torch 2.4.x uyumu icin)
-RUN pip install --no-cache-dir transformers==4.44.2
+# 2. transformers
+RUN pip install --no-cache-dir transformers
 
 # 3. Geri kalan paketler
 RUN pip install --no-cache-dir -r requirements.txt

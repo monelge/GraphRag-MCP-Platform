@@ -69,31 +69,29 @@ class ModelGateway:
         model = get_model(task)
         if not model:
             raise ValueError(f"Task '{task}' için model tanımlı değil veya yerel (local) bir işlem.")
-        
-        # Log request parameters summary
-        api_params = {**kwargs}
-        if "messages" not in api_params:
-            msg_summary = f"{len(messages)} messages"
-            if messages:
-                msg_summary += f" (last: role={messages[-1].get('role')}, len={len(messages[-1].get('content', ''))})"
-        else:
-            msg_summary = "messages-in-kwargs"
+
+        # Fallback zinciri: seçilen model → analysis_model → reasoning_model
+        _fallback_chain = [model]
+        if model != config.analysis_model:
+            _fallback_chain.append(config.analysis_model)
+        if config.reasoning_model not in _fallback_chain:
+            _fallback_chain.append(config.reasoning_model)
 
         logger.info("LLM chat completion isteği başlatılıyor", extra={
             "model": model,
             "task": task,
             "task_id": task_id,
             "node_name": node_name,
-            "msg_summary": msg_summary,
-            "api_params": {k: str(v) for k, v in api_params.items() if k != "messages"}
         })
 
         last_error = None
         for attempt in range(1, self.max_retries + 1):
+            # 429 rate-limit durumunda bir sonraki modele geç
+            active_model = _fallback_chain[min(attempt - 1, len(_fallback_chain) - 1)]
             t0 = time.monotonic()
             try:
                 response = await asyncio.wait_for(
-                    self.client.chat.completions.create(model=model, messages=messages, **kwargs),
+                    self.client.chat.completions.create(model=active_model, messages=messages, **kwargs),
                     timeout=self.request_timeout,
                 )
                 latency = int((time.monotonic() - t0) * 1000)
@@ -102,10 +100,10 @@ class ModelGateway:
                 completion_tokens = usage.completion_tokens if usage else 0
                 total_tokens      = usage.total_tokens      if usage else 0
                 
-                self._update_stats(model, latency, total_tokens)
-                
+                self._update_stats(active_model, latency, total_tokens)
+
                 logger.info("LLM chat completion isteği başarıyla tamamlandı", extra={
-                    "model": model,
+                    "model": active_model,
                     "task": task,
                     "task_id": task_id,
                     "node_name": node_name,
@@ -119,7 +117,7 @@ class ModelGateway:
                 if self._pg:
                     try:
                         await self._pg.log_llm_usage(
-                            model=model,
+                            model=active_model,
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
                             total_tokens=total_tokens,
@@ -133,18 +131,22 @@ class ModelGateway:
             except Exception as exc:
                 last_error = exc
                 latency = int((time.monotonic() - t0) * 1000)
+                is_rate_limit = "429" in str(exc) or "rate" in str(exc).lower()
                 logger.warning("LLM chat completion geçici hatası", extra={
-                    "model": model,
+                    "model": active_model,
                     "task": task,
                     "task_id": task_id,
                     "node_name": node_name,
                     "latency_ms": latency,
                     "attempt": attempt,
                     "max_retries": self.max_retries,
+                    "fallback_next": _fallback_chain[min(attempt, len(_fallback_chain)-1)],
                     "error": str(exc)
                 })
                 if attempt < self.max_retries:
-                    await asyncio.sleep(min(2 ** attempt, self.max_retry_wait))
+                    # Rate-limit'te hemen fallback'e geç, diğer hatalarda bekle
+                    if not is_rate_limit:
+                        await asyncio.sleep(min(2 ** attempt, self.max_retry_wait))
         raise last_error if last_error else RuntimeError("ModelGateway failed without details")
 
     def _update_stats(self, model: str, latency: int, tokens: int):

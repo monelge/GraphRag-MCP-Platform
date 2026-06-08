@@ -20,7 +20,6 @@ from typing import Any
 
 from src.handlers.context import AppContext
 from src.shared.config import config
-from src.shared.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +260,6 @@ class AnalysisHandler:
             return "✅ Tüm public fonksiyonlar için test coverage mevcut görünüyor."
 
         # LLM ile test önerileri üret (ilk 5 fonksiyon)
-        client = get_llm_client()
         candidates = untested[:5]
 
         context_parts = []
@@ -272,8 +270,8 @@ class AnalysisHandler:
         context = "\n\n---\n\n".join(context_parts)
 
         try:
-            response = await client.chat.completions.create(
-                model=config.analysis_model,
+            response = await self.ctx.model_gateway.chat_completion(
+                task="test_suggest",
                 messages=[
                     {
                         "role": "system",

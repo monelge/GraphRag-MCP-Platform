@@ -20,6 +20,51 @@ _orchestration = None
 _analysis = None
 
 
+def _resolve_project_path(path: str) -> str:
+    """Mac/host path'ini container path'ine çevirir. Kısa isim gelirse container root'una ekler."""
+    if not path:
+        return path
+    import os
+    try:
+        from src.shared.config import config
+        host_root = config.host_projects_root.rstrip("/")
+        container_root = config.container_projects_root.rstrip("/")
+
+        # 1. PATH_MAPPINGS: "host_prefix:container_prefix;..." formatında ek eşlemeler
+        mappings = []
+        raw_mappings = os.getenv("PATH_MAPPINGS", "")
+        for pair in raw_mappings.split(";"):
+            pair = pair.strip()
+            if ":" in pair:
+                h, c = pair.split(":", 1)
+                mappings.append((h.rstrip("/"), c.rstrip("/")))
+
+        # Varsayılan eşleme en sona (en spesifik önce)
+        mappings.append((host_root, container_root))
+
+        for h_prefix, c_prefix in mappings:
+            if h_prefix and path.startswith(h_prefix):
+                return c_prefix + path[len(h_prefix):]
+
+        # 2. Zaten container path'i ise dokunma
+        if path.startswith(container_root) or (path.startswith("/") and os.path.isdir(path)):
+            return path
+
+        # 3. Sadece proje adı geldi (örn. "WareLogisticcBYS") — bilinen dizinlerde ara
+        candidates = [
+            f"{container_root}/auto_projects/{path}",
+            f"{container_root}/{path}",
+        ]
+        for candidate in candidates:
+            if os.path.isdir(candidate):
+                return candidate
+        # Bulunamazsa en mantıklı tahmin
+        return f"{container_root}/auto_projects/{path}"
+    except Exception:
+        pass
+    return path
+
+
 def _resolve_collection(name: str) -> str:
     """
     Collection adını registry'ye bakarak doğru büyük/küçük harf ile döner.
@@ -54,6 +99,10 @@ def _tool(func):
         # Collection adını otomatik düzelt (case-insensitive → kayıtlı doğru isme)
         if "collection" in kwargs and kwargs["collection"]:
             kwargs["collection"] = _resolve_collection(kwargs["collection"])
+
+        # Mac/host path'ini container path'ine çevir
+        if "project_path" in kwargs and kwargs["project_path"]:
+            kwargs["project_path"] = _resolve_project_path(kwargs["project_path"])
 
         # Get or generate correlation/task ID
         task_id = kwargs.get("task_id") or kwargs.get("collection")
@@ -105,11 +154,29 @@ def register_all_tools(app, ctx) -> None:
 
 
 async def index_project(project_path: str, collection: str = "", batch_size: int = 32) -> str:
-    return await _indexing.index_project(project_path, collection, batch_size)
+    """İndekslemeyi arka planda başlatır, anında durum döner (MCP timeout'unu aşmaz)."""
+    import asyncio
+    project_path = _resolve_project_path(project_path)
+    logger.info("index_project resolved path", extra={"resolved_path": project_path})
+    if _indexing is None:
+        return f"❌ İndeksleme servisi başlatılmamış (set_runtime çağrılmadı)"
+    task = asyncio.create_task(_indexing.index_project(project_path, collection, batch_size))
+    # 55 saniye bekle — tamamlanırsa sonucu döndür, timeout'a yaklaşırsa background bırak
+    try:
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=55)
+        logger.info("index_project result", extra={"result_preview": str(result)[:200]})
+        return result
+    except asyncio.TimeoutError:
+        col = collection or project_path.split("/")[-1].lower()
+        return (
+            f"⏳ İndeksleme arka planda devam ediyor — koleksiyon: `{col}`\n"
+            f"Dashboard loglarından ilerlemeyi izleyebilirsin.\n"
+            f"Tamamlanınca `search_code` ile test et."
+        )
 
 
 async def incremental_index_project(project_path: str, changed_files=None, batch_size: int = 32) -> str:
-    return await _indexing.incremental_index_project(project_path, changed_files, batch_size)
+    return await _indexing.incremental_index_project(_resolve_project_path(project_path), changed_files, batch_size)
 
 
 async def search_code(query: str, collection: str = "", top_k: int = 0, rewrite_query: Optional[bool] = None) -> str:
@@ -121,7 +188,7 @@ async def explain_code(query: str, collection: str = "", top_k: int = 5) -> str:
 
 
 async def index_agent_docs(project_path: str) -> str:
-    return await _indexing.index_agent_docs(project_path)
+    return await _indexing.index_agent_docs(_resolve_project_path(project_path))
 
 
 async def search_agent_docs(query: str, collection: str = "", layer: str = None, doc_priority: str = None) -> str:
@@ -138,6 +205,10 @@ async def recall_memory(query: str, memory_type: str = None, memory_layer: str =
 
 async def compact_memory(collection: str, query: str = "*") -> str:
     return await _memory.compact_memory(collection, query)
+
+
+async def run_memory_cycle(collection: str) -> str:
+    return await _memory.run_memory_cycle(collection)
 
 
 async def create_agent_task(title: str, description: str, collection: str, steps=None) -> str:
@@ -175,7 +246,7 @@ async def get_active_phase(collection: str) -> str:
 
 
 async def run_verification_plan(project_path: str, run_build: bool = True, run_tests: bool = True, run_lint: bool = False) -> str:
-    return await _execution.run_verification_plan(project_path, run_build, run_tests, run_lint)
+    return await _execution.run_verification_plan(_resolve_project_path(project_path), run_build, run_tests, run_lint)
 
 
 async def run_retrieval_eval(dataset_name: str, collection: str) -> str:
@@ -187,7 +258,7 @@ async def get_control_plane_stats() -> str:
 
 
 async def register_project(project_path: str, collection: str = "", index_code: bool = True, index_docs: bool = True, batch_size: int = 32) -> str:
-    return await _control.register_project(project_path, collection, index_code, index_docs, batch_size)
+    return await _control.register_project(_resolve_project_path(project_path), collection, index_code, index_docs, batch_size)
 
 
 async def list_projects() -> str:
@@ -195,7 +266,12 @@ async def list_projects() -> str:
 
 
 async def summarize_repository(project_path: str, collection: str = "") -> str:
-    return await _control.summarize_repository(project_path, collection)
+    resolved = _resolve_project_path(project_path)
+    # collection belirtilmemişse path'ten türet (lowercase)
+    if not collection:
+        from pathlib import Path
+        collection = Path(resolved).name.lower()
+    return await _control.summarize_repository(resolved, collection)
 
 
 async def search_repo_architecture(query: str, collection: str = "", top_k: int = 6) -> str:
@@ -203,7 +279,7 @@ async def search_repo_architecture(query: str, collection: str = "", top_k: int 
 
 
 async def analyze_change_impact(project_path: str, changed_paths: list, collection: str = "") -> str:
-    return await _control.analyze_change_impact(project_path, changed_paths, collection)
+    return await _control.analyze_change_impact(_resolve_project_path(project_path), changed_paths, collection)
 
 
 async def store_decision_memory(title: str, content: str, collection: str, module: str = "", commit_sha: str = "", provenance: str = "", tags=None) -> str:
@@ -369,7 +445,7 @@ async def security_scan(project_path: str, collection: str = "") -> str:
     """
     if _analysis is None:
         return "❌ AnalysisHandler başlatılmadı"
-    return await _analysis.security_scan(project_path, collection)
+    return await _analysis.security_scan(_resolve_project_path(project_path), collection)
 
 
 async def refactor_suggestions(project_path: str, collection: str = "") -> str:
@@ -379,7 +455,7 @@ async def refactor_suggestions(project_path: str, collection: str = "") -> str:
     """
     if _analysis is None:
         return "❌ AnalysisHandler başlatılmadı"
-    return await _analysis.refactor_suggestions(project_path, collection)
+    return await _analysis.refactor_suggestions(_resolve_project_path(project_path), collection)
 
 
 async def test_suggestion(project_path: str, collection: str = "", target_file: str = "") -> str:
@@ -389,7 +465,7 @@ async def test_suggestion(project_path: str, collection: str = "", target_file: 
     """
     if _analysis is None:
         return "❌ AnalysisHandler başlatılmadı"
-    return await _analysis.test_suggestion(project_path, collection, target_file)
+    return await _analysis.test_suggestion(_resolve_project_path(project_path), collection, target_file)
 
 
 async def code_clone_detection(collection: str = "", threshold: float = 0.95) -> str:
@@ -407,7 +483,7 @@ async def execute_agent_task(goal: str, project_path: str, collection: str = "")
     Kritik: Tüm V2 Plane'lerini (Knowledge, Memory, Agent, Execution, Control) kullanarak
     verilen hedon otonom bir şekilde gerçekleştiren ana orkestrasyon aracıdır.
     """
-    return await _orchestration.execute_agent_task(goal, project_path, collection)
+    return await _orchestration.execute_agent_task(goal, _resolve_project_path(project_path), collection)
 
 
 TOOL_FUNCTIONS = [
