@@ -271,7 +271,7 @@ Her sprint bitiminde veya haftada bir şunları çalıştır:
 - Değişiklik: `"[Dosya] dosyasında [satır] düzeltildi."`
 - Doğrulama: `"Build ve N test geçti."` veya `"[Hata] nedeniyle başarısız."`
 - Kritik bileşen: `"Bu dosya kritik bileşen (PageRank %X). Değişiklik için onayınızı alıyorum."`
-- Sistem sorunu: `"Sistem latency yüksek ([X]ms). Dashboard: http://deva.adanaekspres.com:8080"`
+- Sistem sorunu: `"Sistem latency yüksek ([X]ms). Dashboard: http://localhost:8080"`
 
 **Belirsiz istek:**
 Bir kez netleştirici soru sor. Cevap sonrası doğruca göreve gir, tekrar sorma.
@@ -447,4 +447,4 @@ Sınıflandır (§2)
 
 ---
 
-*GraphRagMCP V2 — MCP: `http://deva.adanaekspres.com:8000/sse` — Dashboard: `http://deva.adanaekspres.com:8080`*
+*GraphRagMCP V2 — MCP: `http://localhost:8000/sse` — Dashboard: `http://localhost:8080`*
