@@ -344,7 +344,7 @@ Kullandığınız AI istemcisinin (örneğin VSCode Cline veya Roo Code) `.mcp.j
 }
 ```
 
-> **SSE Transport** için: `http://deva.adanaekspres.com:8000/sse`
+> **SSE Transport** için: `http://localhost:8000/sse`
 
 ---
 

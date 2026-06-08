@@ -2,8 +2,8 @@
 
 **34 MCP Tool | SOTA GraphRAG | CrossEncoder Reranking | PostgreSQL + Qdrant + Redis + Neo4j**
 
-MCP Endpoint: `http://deva.adanaekspres.com:8000/sse`  
-Dashboard: `http://deva.adanaekspres.com:8080`
+MCP Endpoint: `http://localhost:8000/sse`  
+Dashboard: `http://localhost:8080`
 
 ---
 

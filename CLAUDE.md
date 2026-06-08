@@ -7,7 +7,7 @@ Bu proje bir MCP sunucusudur. Tüm kod analizi, arama ve bellek işlemleri için
 ## MCP Sunucusu
 
 - **Adı:** `graph-mcp`
-- **Transport:** SSE — `http://deva.adanaekspres.com:8000/sse`
+- **Transport:** SSE — `http://localhost:8000/sse`
 - **Koleksiyon varsayılanı:** `WareLogisticcBYS`
 
 ---
